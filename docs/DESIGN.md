@@ -4,6 +4,11 @@ Read on 15 Nov 2026 against develop `2084dfae`. Every header cited below is byte
 
 Study notes for this game, written while planning it. Section 1 is the summary. Sections 2 to 8 cover Nexus, the frame order, where Jolt plugs in, the build, input, the UI and assets. Section 9 says what was read in full and what was only skimmed.
 
+**Decided since this study (15 Nov):**
+- The game is a maze navigated with a drawing tablet (section 6, "Navigating with a drawing tablet"). No VR, and no gamepad, so the gamepad notes in section 6 and request #191 don't apply to this game.
+- A grid maze needs no physics engine: movement is checked against the grid. Sections 4 and 5 (Jolt) apply only if objects to push are added later.
+- External sensors arrive as OSC.
+
 ## 1. Short answer
 
 It's feasible, and Nexus fits the job well.
@@ -232,11 +237,55 @@ schedule_metro(1.0 / 60.0, [&] { fabric.commit(); }, "commit", Vruta::Processing
   - **One thing to test before relying on it:** `RANGE_ENTER` and `RANGE_EXIT` share one `m_was_in_range` flag, and every range entry overwrites it during one `notify_tick`. As written, an enter and an exit hook on the same node look like they'd keep the second one from firing. Read, not run.
   - **No standard controller mapping**, so each pad's report layout has to be written down once. hidraw permissions may need a udev rule (not checked).
   - **Rumble and LEDs:** `HIDBackend::write` (output reports) and `send_feature_report` exist (`HIDBackend.hpp:141-160`). How a project reaches the backend wasn't checked.
-- **Other controllers:** MIDI (PipeWire), OSC, serial and tablet (pressure, tilt, rotation). Unusual controllers are a MayaFlux strength.
+- **Other controllers:** MIDI (PipeWire), OSC and tablet (see below). Unusual controllers are a MayaFlux strength. `bind_serial` exists in the API, but there is no serial backend yet (upstream issue #184 is open), so a serial sensor needs that or a small bridge to OSC.
 - **Webcam as a controller.**
   - `FFmpegCameraReader` (v4l2 on Linux) decodes on its own thread into a `CameraContainer` as RGBA, one frame per request (`IO/Camera/CameraSource.hpp`, `FFmpegCameraReader.hpp`). `choose_camera` in `API/Depot.hpp` opens it.
   - `ImageCVProcessor` runs a `Kinesis::Vision` sequence on a GPU image buffer. It downloads the image, stores the result, signals a broadcast source, and can be throttled (`Buffers/Textures/ImageCVProcessor.hpp`).
   - Motion or body tracking as game input is plausible. Vision itself wasn't read in depth.
+
+### Navigating with a drawing tablet
+
+`TabletBackend` and `TabletNode` were read in full; nothing has been run with a tablet yet. Paths are relative to `src/MayaFlux/`.
+
+- **The backend** (`Core/Backends/Input/TabletBackend.*`):
+  - It opens digitizers through hidapi on Linux, macOS and Windows, with no window and no platform code.
+  - It selects devices by usage page 0x0D (Digitizer, Pen), fetches each descriptor with `hid_get_report_descriptor`, and parses it itself (`parse_descriptor`, `TabletBackend.cpp:253-440`).
+  - A dedicated thread polls with `hid_read_timeout` (2 ms by default).
+  - A pen with an eraser end appears as two tools.
+  - Turn it on with `GlobalInputConfig::with_tablet()` (`Core/GlobalInputConfig.hpp:125-133, 292`).
+- **The frame** (`Core/Input/TabletFrame.hpp`). Each report becomes one frame of 12 slots; axes a tablet lacks read 0.
+
+  | Slot | Range |
+  |---|---|
+  | `X`, `Y` | 0 to 1 across the active area |
+  | `PRESSURE` | 0 to 1 |
+  | `DISTANCE` (hover height) | 0 to 1 |
+  | `TILT_X`, `TILT_Y` | ±90° |
+  | `ROTATION` (barrel) | ±180° |
+  | `SLIDER` | -1 to 1 |
+  | `WHEEL` | degrees this sample |
+  | `WHEEL_CLICKS` | detents this sample |
+  | `BUTTONS` | bit 0 barrel, bit 1 secondary barrel, bit 2 eraser |
+  | `STATE` | proximity and contact bits |
+
+- **The nodes** (`Nodes/Input/TabletNode.*`):
+  - One `TabletNode` per slot, from `TabletConfig::position_x()`, `position_y()`, `pressure()`, `distance()`, `tilt_x()`, `tilt_y()`, `rotation()`, `slider()`, `wheel()`, `contact()`, `proximity()` or `button(bit)`.
+  - Register each with `register_input_node(node, InputBinding::tablet(tool_id))`. Nodes on the same tool get the same hardware sample in one pass.
+  - Events: `on_frame` (the whole frame in `TabletContext`), `on_proximity_enter`/`exit` and `on_contact_begin`/`end`. These fire regardless of the slot the node projects. The `InputNode` events work too (thresholds, ranges, value change).
+- **Threads:**
+  - The poll thread queues each frame. The InputManager thread runs the node and its hooks.
+  - So the game step on the graphics thread reads each node's `get_target_value()` (atomic) once per frame.
+  - Don't call `get_frame()` from the graphics thread: it copies a plain array the input thread writes. If the step needs the whole frame, hand it over through a `SnapshotCell` from `on_frame`.
+  - Pass `SmoothingMode::NONE` for direct control. The default exponential smoothing steps once per report.
+- **Three mappings to try:**
+  1. Tilt as a joystick, with pressure as speed. The pen leaving proximity stops the player.
+  2. The tablet as the map: `X`, `Y` is where to head in the maze, pressure is how fast, and hovering shows a ghost.
+  3. Drag from where the pen touched down gives direction and speed. Barrel rotation or tilt turns the view.
+- **Moving the camera:**
+  - The step writes the `Locus` navigation state (`nav().eye`, `yaw`, `pitch`) directly. With no movement flags held, `advance_navigation` leaves the eye where the step put it, and the Locus builds the view from it.
+  - Collision is a check of the proposed position against the maze grid before writing it.
+- **Access:** `/dev/hidraw*` is root-only by default on Linux, so a udev rule is needed (see the README). macOS needs the Input Monitoring permission.
+- **The pen also drives the desktop pointer.** The Wayland backend has no tablet protocol, so the compositor will probably also emulate a pointer from the pen, and the game window will get mouse events while the pen moves. Ignore mouse input while the `proximity()` node reads 1. This is a question in discussion #192.
 
 ## 7. Game UI with Forma
 

@@ -1,11 +1,13 @@
 # tuning-attention-game
 
-A game built on [MayaFlux](https://github.com/MayaFlux/MayaFlux):
+A maze game built on [MayaFlux](https://github.com/MayaFlux/MayaFlux) and navigated with a drawing tablet. Moving through the maze, and the sound, change the world: the music, the light, which parts open. The world reacts back.
 
-- **MayaFlux Nexus** holds the world: entities, trigger regions and the camera.
-- **[Jolt Physics](https://github.com/jrouwe/JoltPhysics)** will do the rigid bodies.
-- **MayaFlux Forma** draws the HUD and the menus.
+- **MayaFlux Nexus** holds the world: the camera, rooms as trigger regions, and entities that react.
+- **The tablet** moves the player through MayaFlux's TabletBackend: pen tilt, pressure, proximity and position.
+- **External sensors** arrive as OSC.
+- **MayaFlux Forma** draws the HUD.
 - **Sound** comes from MayaFlux nodes and the entities' audio outputs.
+- **[Jolt Physics](https://github.com/jrouwe/JoltPhysics)** only if there turn out to be objects to push. A grid maze doesn't need it.
 
 Status: an empty MayaFlux project. Nothing game-specific is built yet.
 
@@ -21,6 +23,17 @@ cmake --build --preset release --parallel
 
 `./validate.sh` checks the setup. `./run-report.sh` runs the game and saves its console output to `mayaflux_run.txt`.
 
+## Tablet access
+
+The game reads the tablet directly through HID, so your user needs read access to `/dev/hidraw*`. On Linux, a udev rule gives the logged-in user that access. This one is for Wacom (vendor `056a`); Huion is `256c`, XP-Pen `28bd`:
+
+```sh
+echo 'KERNEL=="hidraw*", ATTRS{idVendor}=="056a", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/70-tablet-hidraw.rules
+sudo udevadm control --reload && sudo udevadm trigger
+```
+
+Then replug the tablet. On macOS the app needs the Input Monitoring permission instead. The backend is turned on in `settings()` with `GlobalInputConfig::with_tablet()`.
+
 ## Layout
 
 | Path | What |
@@ -28,17 +41,20 @@ cmake --build --preset release --parallel
 | `src/user_project.hpp` | `settings()` and `compose()`, where the game is built |
 | `src/main.cpp` | Weave launcher, unchanged |
 | `cmake/` | MayaFlux discovery, shaders, community modules (Weave) |
-| `docs/DESIGN.md` | How MayaFlux and Jolt fit together for this game, read from the MayaFlux source |
+| `docs/DESIGN.md` | How MayaFlux fits this game, read from the MayaFlux source |
 | `docs/upstream/` | Feature requests (MayaFlux #188–#191) and a discussion (#192) filed for this game |
 
 ## First steps
 
 One step at a time, each ending in something that runs:
 
-1. **Add Jolt** v5.7.0 through FetchContent, with the CMake settings in `docs/DESIGN.md` section 5.
-2. **A floor and a few boxes.** Each box is a Nexus Agent whose pose comes from its Jolt body. Its mesh is a `Kinesis::generate_box`, attached with `OnMove::Carry`. Jolt steps in a graphics pre-process hook.
-3. **A walking camera.** A Nexus `Locus` whose `NavigationState::eye_constraint` runs a Jolt `CharacterVirtual`.
-4. **Sound from contacts.** Contacts are queued from Jolt's threads and fire entities on the graphics thread.
+1. **A grid maze.** The walls are one box mesh drawn through an `InstanceNetwork`. A Nexus `Locus` is the camera, and its motion is checked against the grid.
+2. **Tablet navigation.** One `TabletNode` per axis, read each frame. Try three mappings and keep what feels right:
+   - tilt as a joystick, with pressure as speed
+   - the tablet as the map
+   - drag from where the pen touched down
+3. **Rooms as Nexus Expanses.** Entering or leaving one changes the music and the light.
+4. **Sensor input over OSC.**
 5. **A HUD** in Forma.
 
 ## Working rules

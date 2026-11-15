@@ -8,11 +8,12 @@ Filed on 15 Nov 2026 from these files. Edits made on GitHub after that are not c
 | `02-modelreader-node-tree.md` | [#189](https://github.com/MayaFlux/MayaFlux/issues/189) ModelReader: carry the Assimp node tree into MeshNetwork slots |
 | `03-forma-set-focus.md` | [#190](https://github.com/MayaFlux/MayaFlux/issues/190) Forma: set focus from code, so menus can be driven by keyboard or gamepad |
 | `04-hid-gamepad-usages.md` | [#191](https://github.com/MayaFlux/MayaFlux/issues/191) Input: bind HID controls by usage, with a standard gamepad profile |
-| `discussion-game-on-nexus.md` | [Discussion #192](https://github.com/orgs/MayaFlux/discussions/192) A game on MayaFlux: Nexus as the entry point, Jolt for physics (category Ideas) |
+| `04-hid-gamepad-usages-comment.md` | [Comment on #191](https://github.com/MayaFlux/MayaFlux/issues/191#issuecomment-6899444834): TabletBackend already parses descriptors; Xbox pads over USB aren't HID on Linux; no longer needed for this game |
+| `discussion-game-on-nexus.md` | [Discussion #192](https://github.com/orgs/MayaFlux/discussions/192), category Ideas. Retitled and edited on 15 Nov for tablet navigation: "A maze game on MayaFlux: Nexus as the entry point, navigated with a drawing tablet" |
 
 To follow them:
 
 ```sh
-gh issue list --repo MayaFlux/MayaFlux --search "188 189 190 191 in:number"
-gh issue view 188 --repo MayaFlux/MayaFlux --comments
+for n in 188 189 190 191; do gh issue view $n --repo MayaFlux/MayaFlux --json number,state,comments --jq '"\(.number) \(.state) comments=\(.comments|length)"'; done
+gh api graphql -f query='{ repository(owner:"MayaFlux", name:"MayaFlux"){ discussion(number:192){ comments(first:20){ totalCount nodes{ author{login} body } } } } }'
 ```
