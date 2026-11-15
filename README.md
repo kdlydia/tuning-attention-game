@@ -29,7 +29,7 @@ cmake --build --preset release --parallel
 | `src/main.cpp` | Weave launcher, unchanged |
 | `cmake/` | MayaFlux discovery, shaders, community modules (Weave) |
 | `docs/DESIGN.md` | How MayaFlux and Jolt fit together for this game, read from the MayaFlux source |
-| `docs/upstream/` | Feature requests and a discussion drafted for MayaFlux. Not filed yet. |
+| `docs/upstream/` | Feature requests (MayaFlux #188–#191) and a discussion (#192) filed for this game |
 
 ## First steps
 

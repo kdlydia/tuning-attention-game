@@ -31,7 +31,7 @@ I read the Nexus, Kinesis (spatial, viewport, geometry), Forma, input and model 
 
 ## Feature requests filed for this
 
-- (Wayland cursor modes: link)
-- (ModelReader node tree into MeshNetwork: link)
-- (Forma set_focus: link)
-- (HID binding by usage and a gamepad profile: link)
+- Wayland cursor modes (pointer lock and relative motion): #188
+- ModelReader node tree into MeshNetwork slots: #189
+- Forma `set_focus`, for keyboard and gamepad menus: #190
+- HID binding by usage, with a standard gamepad profile: #191
