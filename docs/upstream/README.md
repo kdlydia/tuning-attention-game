@@ -10,7 +10,8 @@ Filed on 15 Nov 2026 from these files. Edits made on GitHub after that are not c
 | `04-hid-gamepad-usages.md` | [#191](https://github.com/MayaFlux/MayaFlux/issues/191) Input: bind HID controls by usage, with a standard gamepad profile |
 | `04-hid-gamepad-usages-comment.md` | [Comment on #191](https://github.com/MayaFlux/MayaFlux/issues/191#issuecomment-6899444834): TabletBackend already parses descriptors; Xbox pads over USB aren't HID on Linux; no longer needed for this game |
 | `discussion-game-on-nexus.md` | [Discussion #192](https://github.com/orgs/MayaFlux/discussions/192), category Ideas. Retitled and edited on 15 Nov for tablet navigation: "A maze game on MayaFlux: Nexus as the entry point, navigated with a drawing tablet" |
-| `pr-forma-set-focus.md` | [PR #193](https://github.com/MayaFlux/MayaFlux/pull/193) Forma: set keyboard focus from code (Context::set_focus). Closes #190. Branch `kdlydia/MayaFlux:forma-set-focus`, based on main |
+| `pr-forma-set-focus.md` | [PR #193](https://github.com/MayaFlux/MayaFlux/pull/193) Forma: set keyboard focus from code (Context::set_focus). Closes #190. Branch `kdlydia/MayaFlux:forma-set-focus`, based on main. Description updated on 16 Nov for the second commit |
+| `pr-forma-set-focus-reply-1.md` | [Reply on #193](https://github.com/MayaFlux/MayaFlux/pull/193#issuecomment-6921023278) to the 16 Nov review (changes requested: focus callbacks that move focus). Fixed in `b70fab2a` |
 
 To follow them:
 
