@@ -11,7 +11,7 @@ This is not a feature checklist. It covers four things:
 - where timing comes from: clocks, schedules, events, node signals and recordings
 - what MayaFlux already gives us, and what we build ourselves, as editor features or game features
 
-It assumes two things: that Alembic cameras are hooked up to Nexus, and that skinning is the only piece still missing.
+It follows MayaFlux's develop branch as of 23 Nov, which now has skinning and cameras read from Alembic files ([pull request #196](https://github.com/MayaFlux/MayaFlux/pull/196)). Letting Nexus entities drive and follow animations comes in a later pull request.
 
 ## Ideas you already know
 
@@ -30,11 +30,12 @@ Most Unity ideas have a counterpart. The names differ, but the job is the same, 
 | Tweens | `schedule_line`, TimeMaps | Move a value over time along a curve. |
 | Trigger collider, `OnTriggerEnter` | An Expanse with enter, exit and inside actions. A Hull takes its box from a mesh. | A region that reacts when something walks in. |
 | `Physics.OverlapSphere`, `Raycast` | `within_radius`, `k_nearest`, `ray_cast` on the Fabric's snapshot | Ask what is near. Entities are points here, not shapes. |
-| Camera | Locus, a Nexus Agent that drives the view of the things it draws | A viewpoint that moves through the world. |
+| Camera | Locus, a Nexus Agent that drives the view of the things it draws. A camera from a file is a lens plus a placement, made into a view with `view_from_lens`. | A viewpoint that moves through the world. A file camera keeps its own lens and roll. |
 | MeshFilter and MeshRenderer | A buffer (MeshBuffer, MeshNetworkBuffer) with a render processor aimed at a window | Geometry, plus how and where it is drawn. |
+| SkinnedMeshRenderer | A skinned mesh in a MeshAssemblyRealization, bent on the GPU by its joints | The file's bones bend the mesh. |
 | GPU instancing | InstanceNetwork | One mesh drawn many times. Our maze walls work this way. |
 | Imported model, prefab hierarchy | MeshAssembly: parented rows, shared meshes, materials | A mesh used in many places is stored once. |
-| Animation clip, Animator | A motion, played by a Reflow and its courses | Play, pause, seek, speed, loop, weight. |
+| Animation clip, Animator | A motion, played by a Reflow and its courses | Play, pause, seek, speed, loop, weight. Markers fire events, and `placement_blend` mixes the poses of several clips. |
 | AudioSource | An entity's audio output. TapSet or a sampler for files. | Sound comes from an object in the world. |
 | VideoPlayer | Chimera layers | A video plays into a texture. |
 | Input System | Input nodes (HID, tablet, gamepad), window events, OSC | Read the device, map it to movement. |
@@ -69,7 +70,7 @@ So "the sound changes the world" is not one audio system talking to a separate g
 
 ### Time is something you play
 
-Any recorded thing plays through a Reflow with the same controls: a volume sequence, a point cloud, a mesh cache, a model's animation, a camera path. Speed (negative plays backwards), range, loop or ping-pong, seek and weight work the same for all of them.
+Any recorded thing plays through a Reflow with the same controls: a volume sequence, a point cloud, a mesh cache, a model's animation, a camera path. Speed (negative plays backwards), range, loop or ping-pong, seek, weight and markers work the same for all of them.
 
 Animation is read from its keys at whatever time is asked for, so there is no bake step. A Reflow can also trail a recording by a lag, so echo and delay work on pictures and geometry, not only on sound.
 
@@ -159,7 +160,7 @@ A recording's position is a clock too, and so is the cycle count of a buffer pip
 
 | Source | Time it gives | What you can hook |
 | --- | --- | --- |
-| Reflow course | `time()` and `progress()` (0 to 1), readable from any thread | Course and Reflow events. Lanes can enter late (`enters_after`), show every Nth cycle (`every`), or trail a recording by a lag (`trailing_frames`). |
+| Reflow course | `time()` and `progress()` (0 to 1), readable from any thread | Course and Reflow events, and markers that fire as the playhead passes them in either direction. One course can follow another. Lanes can enter late (`enters_after`), show every Nth cycle (`every`), or trail a recording by a lag (`trailing_frames`). |
 | TapSet tap | Its read position in a sound | Start time, speed, repeats and lag, fixed or as a TimeMap |
 | Chimera layer | Its moment in a video ring or image collection | Start time, lag, speed, refresh every N frames, `cut`. The builder's `every(seconds, action)` runs an action alongside. |
 | Sampler (SamplingPipeline) | Each voice's cursor in a sound | `play`, `play_continuous`, `trigger(voice, offset)`, `stop`, `build_for(ms)` |
@@ -187,7 +188,7 @@ Audio-rate hooks run on the audio thread, so they set a value and let a frame ta
 
 ## What MayaFlux already gives us
 
-MayaFlux has a player for every kind of asset we plan to use, except skinned characters (last section). Audio, images and video play in the current nightly. The rest is on MayaFlux's develop branch and arrives with the next nightly.
+MayaFlux has a player for every kind of asset we plan to use, skinned characters included. Audio, images and video play in the current nightly. The rest is on MayaFlux's develop branch and arrives with the next nightly.
 
 | Asset | Plays through | What you control | Available |
 | --- | --- | --- | --- |
@@ -198,8 +199,9 @@ MayaFlux has a player for every kind of asset we plan to use, except skinned cha
 | Volume sequences (VDB) | Reflow | Speed, range, loop, seek, weight | Next nightly |
 | Point clouds and curves (Alembic) | Reflow | The same | Next nightly |
 | Meshes that change over time (Alembic) | Reflow, into a MeshBuffer | The same | Next nightly |
-| Animated models (glTF, FBX, Alembic transforms) | A motion of a MeshAssembly, played by Reflow | Play, pause, seek, speed, loop, weight per clip | Next nightly |
-| Cameras (Alembic) | The camera's motion, played into a Locus | The same as any clip | Next nightly |
+| Animated models (glTF, FBX, Alembic transforms) | A motion of a MeshAssembly, played by Reflow | Play, pause, seek, speed, loop, weight and markers per clip. Clips blend by weight. | Next nightly |
+| Skinned characters (glTF, FBX) | MeshAssemblyRealization, skinned on the GPU | The same as any clip. Effects added afterwards bend the skinned body. | Next nightly |
+| Cameras (Alembic) | The camera's motion and its lens, made into a view with `view_from_lens` | The same as any clip. Focal length and clip planes can animate too. | Next nightly |
 | Whole animated scenes | MeshAssemblyRealization | Still parts, moving parts, instances and point clouds under one hierarchy, with their materials | Next nightly |
 
 ## What we build: the editor
@@ -230,32 +232,35 @@ The game is C++ in `src/`, set up in `compose()`. Most game features are MayaFlu
 | Walls that differ | A tint and a texture per wall, from a texture array (next nightly) | To build |
 | Player camera | A Locus moved by the tablet, its motion checked against the grid | To build |
 | Tablet navigation | Tablet nodes read each frame. We try tilt as a joystick, the tablet as the map, and drag from where the pen touched down. | To build |
-| Camera paths | Alembic camera motions played into the same Locus | To build |
+| Camera paths | The Alembic camera's motion and lens, shown through `view_from_lens`. The Locus takes over again when the path ends. | To build |
 | Rooms | Expanses on the maze. Entering or leaving one changes the music and the light. | To build |
 | Tunnel sound | The tunnel tracks as TapSet taps whose speed or lag follows the player | To build |
 | Tunnel video | `tunnels.mp4` as Chimera layers at different lags, combined by a shader | To build |
-| Animation player | Clips as Reflow lanes, plus our own pose blending, crossfades, markers and states | To build |
+| Animation player | Clips as Reflow lanes blended by `placement_blend`, plus our own crossfade timing and state machine | To build |
 | Sensors | OSC input | To build |
 | HUD | Forma | To build |
 
-The animation player is where Unity's Animator maps most closely. Reflow already plays, pauses, seeks, loops and weights each clip. We add the rest:
+The animation player is where Unity's Animator maps most closely. Reflow already plays, pauses, seeks, loops and weights each clip. It also blends poses by weight (`placement_blend`), fires an event at each marker, such as a footstep at 0.4 s, and layers an edit on top of a pose (`placement_edit`). We add the rest:
 
-1. Blending the poses of two clips by their weights
-2. Crossfade timing
-3. Events at marked times, such as a footstep at 0.4 s
-4. A state machine that picks the clip
+1. Crossfade timing: ramping one clip's weight down while the next one's goes up
+2. A state machine that picks the clip
 
 The editor's timeline drives the same settings, so scrubbing in the editor and playing in the game use one code path.
 
-## The one gap: skinning
+## Skinning and cameras from files
 
-Skinning is the one thing MayaFlux can't do yet. In Unity it is what the SkinnedMeshRenderer does: bones bend a mesh, and blend shapes morph it. Without it, a character's mesh does not follow its skeleton.
+Both are on develop now, and reach the nightly once [pull request #196](https://github.com/MayaFlux/MayaFlux/pull/196) is merged.
 
-Two things still work:
+**Skinning** is what Unity's SkinnedMeshRenderer does: bones bend a mesh. `ModelReader` reads the bones and weights from a glTF or FBX file. `MeshAssemblyRealization` skins those meshes on the GPU, and a motion played into its `placement_sink()` moves the joints. Effects added afterwards, like a wave or an attractor, bend the skinned body, not its rest pose.
 
-- Anything that moves as rigid parts, like doors, platforms, machines, or a creature made of separate pieces. Each piece follows the joint it hangs from.
-- A character's animation exported as an Alembic mesh cache. It plays frame by frame through Reflow. The files are larger, and switching between cached clips is a cut unless we write our own vertex blend.
+For now:
 
-When skinning lands, the animation player should not need to change. It already produces poses, and skinning only bends the mesh to match them.
+- A skinned mesh drawn as instances stays in its rest pose. Skinning covers meshes drawn one by one.
+- Blend shapes (morph targets) are not read yet.
+- Alembic files carry no bones. A character exported to Alembic plays as a mesh cache instead.
+
+**Cameras.** `SpatialReader` reads an Alembic camera's lens: focal length, film back and clip planes, for every frame if it animates. The camera is a row in the scene's hierarchy, so its motion plays like any other clip. `Kinesis::view_from_lens` turns the row's placement and the lens into a view, which goes on the render processors with `set_view_transform`. Unlike a Locus, it keeps the shot's roll and field of view.
+
+Connecting Nexus to this comes in a second pull request. For example, an entity entering a room could start a motion, or an entity could follow a character's hand.
 
 Open question: does the maze game need skinned characters at all?
