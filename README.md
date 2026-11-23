@@ -25,14 +25,20 @@ cmake --build --preset release --parallel
 
 ## Tablet access
 
-The game reads the tablet directly through HID, so your user needs read access to `/dev/hidraw*`. On Linux, a udev rule gives the logged-in user that access. This one is for Wacom (vendor `056a`); Huion is `256c`, XP-Pen `28bd`:
+The game reads the tablet directly through HID, so your user needs read access to `/dev/hidraw*`. On Linux, current MayaFlux nightlies install a udev rule for common tablets (Wacom, XP-Pen, Huion, UC-Logic, VEIKK, Genius, Hanvon) at `/usr/lib/udev/rules.d/70-mayaflux-hid.rules`. Load it and replug the tablet:
 
 ```sh
-echo 'KERNEL=="hidraw*", ATTRS{idVendor}=="056a", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/70-tablet-hidraw.rules
 sudo udevadm control --reload && sudo udevadm trigger
 ```
 
-Then replug the tablet. On macOS the app needs the Input Monitoring permission instead. The backend is turned on in `settings()` with `GlobalInputConfig::with_tablet()`.
+If that file is missing, or your tablet isn't in it, add a rule with the tablet's vendor id from `lsusb`. When MayaFlux can't open a device, its log prints the exact line to use.
+
+```sh
+echo 'KERNEL=="hidraw*", ATTRS{idVendor}=="xxxx", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/70-mayaflux-local.rules
+sudo udevadm control --reload && sudo udevadm trigger
+```
+
+On macOS the app needs the Input Monitoring permission instead. The backend is turned on in `settings()` with `GlobalInputConfig::with_tablet()`.
 
 ## Layout
 

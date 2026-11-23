@@ -1,13 +1,17 @@
 # A game on MayaFlux: Nexus as the entry point, Jolt for physics
 
-Read on 15 Nov 2026 against develop `2084dfae`. Every header cited below is byte-identical in the installed nightly (main `38e09827`), so all of it can be used today. Read, not run: nothing was built or tested. Paths are relative to `src/MayaFlux/` unless they say otherwise.
+Read on 15 Nov 2026 against develop `2084dfae`, and updated on 22 Nov against develop `4d6fbcc1`. The nightly installed on 22 Nov is main `0f71ff55` (21 Nov), and every installed header matches it. Anything that is on develop only says so. Line numbers are from `2084dfae`. Read, not run: nothing was built or tested. Paths are relative to `src/MayaFlux/` unless they say otherwise.
 
-Study notes for this game, written while planning it. Section 1 is the summary. Sections 2 to 8 cover Nexus, the frame order, where Jolt plugs in, the build, input, the UI and assets. Section 9 says what was read in full and what was only skimmed.
+Study notes for this game, written while planning it. Section 1 is the summary. Sections 2 to 8 cover Nexus, the frame order, where Jolt plugs in, the build, input, the UI and assets; section 8 also covers playing recorded assets. Section 9 says what was read in full and what was only skimmed.
 
 **Decided since this study (15 Nov):**
 - The game is a maze navigated with a drawing tablet (section 6, "Navigating with a drawing tablet"). No VR, and no gamepad, so the gamepad notes in section 6 and request #191 don't apply to this game.
 - A grid maze needs no physics engine: movement is checked against the grid. Sections 4 and 5 (Jolt) apply only if objects to push are added later.
-- External sensors arrive as OSC.
+- External sensors arrive as OSC or serial (section 6).
+
+**Changed upstream by 22 Nov:**
+- Most of the gaps in section 1 are closed. Wayland mouse lock (#188), HID by usage (#191) and serial input (#184) are in the nightly. The Assimp node tree (#189) is on develop only.
+- MayaFlux has a player for recorded assets, Course and Reflow (section 8). It plays VDB volume sequences now. Alembic and Assimp are expected to get the same: the `SequenceContainer` docs name a spatial cache and a mesh scene as sources.
 
 ## 1. Short answer
 
@@ -26,16 +30,16 @@ What Nexus doesn't have is exactly what Jolt provides: collision shapes, rigid b
 
 The places to join the two already exist, in Pheme (`Survey`, `Attachment`, `FieldTargets`) and in Kinesis (`AABB3D`, `screen_to_ray`, `NavigationState::eye_constraint`, the mesh generators). The graphics thread's frame order lets one task step physics, commit Nexus and draw the result in the same frame, all on one thread.
 
-**Gaps for a real game, most important first:**
-1. **Mouse lock on Linux.** It works only on macOS; on Wayland it would have to be added (section 6).
-2. **Gamepads.** They arrive as raw HID bytes, with no standard button and axis mapping (section 6).
-3. **Model scene graphs.** `ModelReader::create_mesh_network` gives a MeshNetwork, which can hold a parent tree and a transform per slot. But ModelReader adds every mesh as a root with an identity transform, so the file's placement has to be filled in, by hand or by a small upstream change (section 8).
-4. **Skinning.** No bones or skinning are imported. Rigid, jointed and field-deformed parts all work through MeshNetwork's operators (section 8).
+**Gaps for a real game, most important first (status on 22 Nov):**
+1. **Mouse lock on Linux.** Done. Wayland and Win32 honour `CursorMode` since the 19 Nov nightly (#188, section 6).
+2. **Gamepads.** Done, and in the nightly: HID controls are read by usage from the report descriptor (#191, section 6).
+3. **Model scene graphs.** Done on develop: `ModelReader::create_mesh_network` carries the file's node tree into the slots (#189, section 8). The 21 Nov nightly still adds every mesh as a root with an identity transform.
+4. **Skinning.** Still missing. No bones or skinning are imported, and animations are only counted. Rigid, jointed and field-deformed parts all work through MeshNetwork's operators (section 8).
 5. **Not checked:** lighting, shadows and materials; 3D audio beyond stereo panning; Lila live coding with Jolt loaded.
 
 **What I'd expect each kind of project to take:**
 - **Physics sandbox or interactive environment with sound:** possible now. I'd estimate 300–500 lines of project code to join the two.
-- **Small complete 3D game** (walking camera, triggers, HUD, sound): possible. It also needs mouse look on Wayland (or a right-drag look until then), gamepad report layouts and a contact queue.
+- **Small complete 3D game** (walking camera, triggers, HUD, sound): possible. It also needs a contact queue. Mouse look and gamepads are now in MayaFlux.
 - **Skinned, animated characters:** a large addition (bone import plus a skinning shader). Not a small step.
 
 ## 2. What Nexus is (read from the source)
@@ -51,6 +55,7 @@ The places to join the two already exist, in Pheme (`Survey`, `Attachment`, `Fie
 - **Wiring** decides when an entity fires (`Wiring.hpp`, `Wiring.cpp`):
   - `every(interval, token)`, a metro
   - `on(window, key, held, on_release)`, `on(window, mouse button ...)`, `on_scroll`, `on(NetworkSource)`, `on(WindowEventSource)`
+  - On develop: `on(shared_ptr<NetworkSource>)`, `on(window, WindowEventFilter)` in place of `on(WindowEventSource)`, `on(shared_ptr<BroadcastSource<T>>)` (section 8 uses it for Course events), and `every(token)` for once per frame with no interval to round. One wiring can hold several triggers; a second `on()` adds one instead of replacing the first. The event that caused a firing reaches the entity as `InfluenceContext::input`.
   - `move_to` steps, `position_from`, `times`, `for_duration`
   - `use(...)` with your own coroutine, and `bind(...)`, which calls once, immediately
   - Without any of these, the entity fires on every commit.
@@ -58,11 +63,13 @@ The places to join the two already exist, in Pheme (`Survey`, `Attachment`, `Fie
 - **Agent** has a position, an optional orientation (a quaternion, local +Z forward) and a query radius. When fired (`Fabric.cpp:389-456`, perception at 429, influence context from 432):
   1. Perception: neighbours within the radius, from the snapshot.
   2. Influence: the influence function, then the audio sinks, render sinks, the attachment and any typed influences.
+  - On develop its state is a controls struct, set with `set({ .position = ..., .orientation = ... })`, which is safe from any thread (`Principals/Agent.hpp`, `Controls.hpp`, `Quantity.hpp`). `set_position` and the other setters are deprecated for one release. Emitter, Sensor, Presence, Locus and Expanse have controls structs too.
 - **Pheme** joins entities to buffers:
   - **`Survey`** (`Pheme/Survey.hpp`): reads what Jolt needs from any buffer.
     - `read_bounds(buf)` gives the `AABB3D` of a mesh, point cloud, path, volume grid, network or instance buffer.
     - `read_anchor(buf, index)` gives the centroid or one vertex.
     - `read_placement(buf)` gives the render transform the buffer is drawn with.
+    - On develop a MeshNetworkBuffer is read through its slot transforms, so the bounds and anchors of an imported model match what's drawn (`5e6f348c`).
   - **`Attachment`** (`Pheme/Attachment.*`): moves an existing buffer with the entity.
     - `apply_attachment` builds `pivot_transform(anchor, position - rotation * offset, rotation)` and installs it as a stacked geometry transform on every render processor of the buffer.
     - Nothing is written into the buffer. Release restores the old transform.
@@ -79,12 +86,14 @@ The places to join the two already exist, in Pheme (`Survey`, `Attachment`, `Fie
   - Each commit tests every entity position, and the membership difference fires enter, exit and inside actions.
   - `Hull` takes its box from a buffer's bounds and follows the buffer's render transform exactly, rotation and scale included (`Expanses/Hull.cpp`: the point goes through the inverse placement).
   - `Mantle` is the reverse: the box places the buffer, with fit modes.
+  - On develop `Fabric::set_within(expanse, controls)` applies a controls struct to every entity inside a region.
 - **Locus** is a camera Agent built on `Kinesis::NavigationState` (`Principals/Locus.*`).
   - Perception moves the eye and builds the `ViewTransform`. Influence pushes the view to its render processors.
-  - `set_timestep(dt)` makes the path repeatable.
+  - `set_timestep(dt)` makes the path repeatable. On develop it's `set(LocusControls { .timestep = dt })`. `nav()` is unchanged.
 - **State** saves and loads Fabrics and the Tapestry as JSON plus EXR, schema version 7 (`State/Schema.hpp`).
   - Saved: entities, wiring records and Expanse boxes.
   - Not saved: live objects (buffers, attachments, typed influences). They must be made again; named functions come back through Fabric's function registry.
+  - On develop each entity is saved through its controls, and only a wiring's first trigger is saved.
 - **Everything is points.** The index holds one point per entity and answers radius and k-nearest queries. `SpatialIndex::publish` rebuilds a hash grid each commit (`Kinesis/Spatial/SpatialIndex.cpp:165-206`). `Kinesis::ray_cast` measures each point's distance from the ray, over the whole snapshot (`Kinesis/Spatial/HitTest.hpp`). There are no shapes, no overlap of extents and no contacts.
 - **MayaFlux's own physics** (`Nodes/Network/Operators/PhysicsOperator.hpp`) is particles: velocity, force and mass per point, gravity, drag, a bounds box, repulsion springs, force fields and bonds. It has no rigid bodies, no rotation or inertia, and no contact solving.
 
@@ -112,16 +121,20 @@ So the game splits like this:
    - The body takes its pose from Jolt in its own `invoke_perception` override, as Locus does with its navigation state. `Fabric::fire` builds the influence context from the position and orientation after perception has run (`Fabric.cpp:389-456`, perception at 429, influence context from 432), so the attachment places the mesh at this frame's pose.
 3. **A commit metro is needed only for neighbours or Expanses** (section 2).
 
+With no physics, the game step can be `Kriya::each_cycle(fn)` (develop), added with `scheduler->add_task`. It runs `fn` once per frame on the graphics thread, in step 2, with no interval to round (`Kriya/Tasks.hpp`).
+
 The same frame's buffer pass then draws the result. Two things leave the graphics thread: Jolt's worker threads inside `Update`, which finish before it returns, and Jolt's contact callbacks, which go through a queue.
 
-Audio stays on the audio callback thread. Hand values across the way the existing projects do: atomics, nodes, `SnapshotCell`. The community guide's rule applies: no mutex on the audio thread. Fabric itself doesn't lock, so keep every Nexus call on that one FRAME_ACCURATE path. The community guide already lists Nexus commits under the graphics thread.
+Audio stays on the audio callback thread. Hand values across the way the existing projects do: atomics, nodes, `SnapshotCell`. The community guide's rule applies: no mutex on the audio thread. Fabric's firing and commit don't lock, so keep them on that one FRAME_ACCURATE path. On develop an entity's controls can be set from any thread. The community guide already lists Nexus commits under the graphics thread.
+
+MayaFlux's `docs/Digital_Architecture.md` (develop) now has a table of which thread each Kriya callback runs on. A network trigger runs on the network I/O thread, and a broadcast trigger on the thread that signals the source. Whether `Fabric::fire` is safe from the network thread wasn't checked, so read network input through a node once per frame instead.
 
 ## 4. Where Jolt plugs in
 
 | Need | Jolt | MayaFlux seam |
 |---|---|---|
 | A body moves its mesh | `BodyInterface::GetPositionAndRotation` | An Agent subclass holding a `JPH::BodyID` sets its own position and orientation from Jolt in `invoke_perception`, and is wired with `every(..., FRAME_ACCURATE)`. `Agent::attach(buf, { .on_move = AttachConfig::OnMove::Carry })` then places the mesh through `apply_attachment`. Carry matters: `follow_attachment` runs before perception and treats Jolt's move as an outside move, and `Offset` would fold that move into the offset (`Pheme/Attachment.cpp:107-127`). Or set the render processor's `set_geometry_transform_source` directly. |
-| A multi-part model as bodies | same, one body per part | `ModelReader::create_mesh_network` gives one `MeshSlot` per mesh. Set each root slot's `local_transform` from its body and mark it `dirty`, or feed it with `Nexus::bind_transform(op, slot)` on a `MeshTransformOperator` (section 8). Child slots compose `world = parent_world * local`, so a body's world pose goes in as `inverse(parent_world) * pose`. |
+| A multi-part model as bodies | same, one body per part | `ModelReader::create_mesh_network` gives one `MeshSlot` per mesh in the nightly, and one per scene node on develop. Set each root slot's `local_transform` from its body and mark it `dirty`, or feed it with `Nexus::bind_transform(op, slot)` on a `MeshTransformOperator` (section 8). Child slots compose `world = parent_world * local`, so a body's world pose goes in as `inverse(parent_world) * pose`. |
 | Many bodies, one draw | same | `InstanceNetwork`: set `get_slot(i).transform` and `dirty` per slot for one instanced draw (`Nodes/Network/InstanceNetwork.hpp:9-30`, `GeometrySlot.hpp`). Or `Nexus::bind_transform` on an `InstanceFieldOperator`. |
 | A box shape | `BoxShape`, offset with `RotatedTranslatedShape` | `read_bounds(buf)`: half extent and centre. `Kinesis::generate_box` gives the matching mesh. |
 | A convex or static mesh shape | `ConvexHullShapeSettings`, `MeshShapeSettings` | `Kakshya::MeshData` is interleaved vertex bytes, uint32 triangle indices and a `VertexLayout` (`Kakshya/NDData/MeshData.hpp`). Read positions with `Kinesis::position_at(bytes, stride, offset, i)` (`Kinesis/Morphology.hpp`). The sources are `IO::ModelReader::load`, `generate_box`, `generate_grid`, `generate_tube`, `generate_revolution` and `generate_sdf_mesh` (marching cubes). Survey's own position decoder is internal, so this is a short loop of your own. |
@@ -183,8 +196,9 @@ public:
     {
         JPH::RVec3 p; JPH::Quat q;            // Jolt to Nexus, as Locus does with its nav state
         m_bi.GetPositionAndRotation(m_id, p, q);
-        set_position({ p.GetX(), p.GetY(), p.GetZ() });
-        set_orientation(glm::quat(q.GetW(), q.GetX(), q.GetY(), q.GetZ()));
+        set({ .position = glm::vec3(p.GetX(), p.GetY(), p.GetZ()),
+              .orientation = glm::quat(q.GetW(), q.GetX(), q.GetY(), q.GetZ()) });
+        // nightly (21 Nov): set_position(...) and set_orientation(...)
         Agent::invoke_perception(ctx);
     }
 private:
@@ -215,8 +229,9 @@ schedule_metro(1.0 / 60.0, [&] { fabric.commit(); }, "commit", Vruta::Processing
   - There are no touch events.
 - **Polling.** Each window's `WindowEventSource` keeps key and button state and the mouse position: `is_key_pressed`, `is_mouse_pressed`, `get_mouse_position` (`Vruta/WindowEventSource.hpp:124-135`). `signal()` updates it on the graphics thread, so a FRAME_ACCURATE game step can poll WASD with no event wiring.
 - **Every listener gets every event.** `signal()` dispatches each event to all matching awaiters. Nothing marks an event as handled.
-- **Mouse lock.** `CursorMode` has `DISABLED` and `CAPTURED` for an FPS camera (`Core/GlobalGraphicsInfo.hpp:446-465`), but only `Cocoa/CocoaWindow.mm` reads it. The Wayland and Win32 backends don't. Mouse look on Linux needs the relative-pointer and pointer-constraints protocols added to `WaylandWindow`, which is an upstream request. Until then, use right-drag look (`NavigationState::rmb_held`).
+- **Mouse lock.** `CursorMode` has `DISABLED` and `CAPTURED` for an FPS camera (`Core/GlobalGraphicsInfo.hpp:446-465`). On 15 Nov only `Cocoa/CocoaWindow.mm` read it. Since the 19 Nov nightly, Wayland (pointer constraints and relative pointer) and Win32 honour it too (#188; from the commit messages).
 - **Gamepads and other HID devices** (`HIDNode` and `InputNode`, `.hpp` and `.cpp` read in full).
+  - **Changed in the nightly (#191):** `HIDNode` reads controls by usage from the report descriptor, with the descriptor's range. `HIDConfig::axis`, `button` and byte `custom` are gone. Devices keep their id across a replug, and nodes can be tuned while running. The notes below describe the API before 19 Nov. This is from the commit messages and the reply on #191; not re-read.
   - **The path a report takes:**
     1. `HIDBackend` reads with hidapi on its own poll thread (`hid_read_timeout`, 10 ms by default) (`Core/Backends/Input/HIDBackend.hpp:43-74`, `.cpp:66, 396-408`).
     2. Each report becomes an `InputValue` of raw bytes (`HIDBackend.cpp:453-463`) and is queued.
@@ -237,7 +252,20 @@ schedule_metro(1.0 / 60.0, [&] { fabric.commit(); }, "commit", Vruta::Processing
   - **One thing to test before relying on it:** `RANGE_ENTER` and `RANGE_EXIT` share one `m_was_in_range` flag, and every range entry overwrites it during one `notify_tick`. As written, an enter and an exit hook on the same node look like they'd keep the second one from firing. Read, not run.
   - **No standard controller mapping**, so each pad's report layout has to be written down once. hidraw permissions may need a udev rule (not checked).
   - **Rumble and LEDs:** `HIDBackend::write` (output reports) and `send_feature_report` exist (`HIDBackend.hpp:141-160`). How a project reaches the backend wasn't checked.
-- **Other controllers:** MIDI (PipeWire), OSC and tablet (see below). Unusual controllers are a MayaFlux strength. `bind_serial` exists in the API, but there is no serial backend yet (upstream issue #184 is open), so a serial sensor needs that or a small bridge to OSC.
+- **Other controllers:** MIDI (PipeWire), OSC, serial and tablet (see below). Unusual controllers are a MayaFlux strength.
+- **OSC** comes in through the InputManager's OSC bridge, a UDP endpoint (`InputManager::setup_osc_bridge`), to `OSCNode`s bound by address prefix. Turn it on with `GlobalInputConfig::with_osc(port)`.
+- **Serial** (in the nightly, #184):
+  - `SerialSpec` describes a port: `SerialSpec::lines().baud(115200)`, or delimiter, COBS, SLIP, silence-gap or MIDI framing (`Core/Input/SerialSpec.hpp`).
+  - `SerialNode` follows one number of each line: `SerialConfig::at(i)` or `normalized(min, max, i)` (`Nodes/Input/SerialNode.hpp`).
+  - `open_serial_port`, `choose_serial_port` (a Forma picker), `write_serial`, `send_serial_message`, and `open_serial_reading`, which reads one port a second way (`API/Input.hpp`).
+  - Turn on both `GlobalInputConfig::serial` and `GlobalNetworkConfig::serial`. Ports are opened through the network service.
+  - Values arrive on the network I/O thread and go through the InputManager like other input, so read `get_target_value()` once per frame.
+  - A device keeps its id across a replug, found by its `/dev/serial/by-id` path.
+  - Serial ports need read access; on Arch they belong to the `uucp` group.
+- **Network** (all in the nightly):
+  - TCP and Unix-socket endpoints can use `FramingPolicy::LINE`, one text line per message (`Core/GlobalNetworkConfig.hpp`). A sensor bridge, such as a phone app or a script, can send plain text.
+  - Endpoints report their connection state, so the game can tell when a bridge drops.
+  - Lila listens over TCP or a Unix socket, for live coding the running game.
 - **Webcam as a controller.**
   - `FFmpegCameraReader` (v4l2 on Linux) decodes on its own thread into a `CameraContainer` as RGBA, one frame per request (`IO/Camera/CameraSource.hpp`, `FFmpegCameraReader.hpp`). `choose_camera` in `API/Depot.hpp` opens it.
   - `ImageCVProcessor` runs a `Kinesis::Vision` sequence on a GPU image buffer. It downloads the image, stores the result, signals a broadcast source, and can be throttled (`Buffers/Textures/ImageCVProcessor.hpp`).
@@ -245,7 +273,7 @@ schedule_metro(1.0 / 60.0, [&] { fabric.commit(); }, "commit", Vruta::Processing
 
 ### Navigating with a drawing tablet
 
-`TabletBackend` and `TabletNode` were read in full; nothing has been run with a tablet yet. Paths are relative to `src/MayaFlux/`.
+`TabletBackend` and `TabletNode` were read in full; nothing has been run with a tablet yet. Paths are relative to `src/MayaFlux/`. `TabletNode` and `TabletFrame` are unchanged since 15 Nov; the backend changes are under "Since 19 Nov" below.
 
 - **The backend** (`Core/Backends/Input/TabletBackend.*`):
   - It opens digitizers through hidapi on Linux, macOS and Windows, with no window and no platform code.
@@ -277,6 +305,10 @@ schedule_metro(1.0 / 60.0, [&] { fabric.commit(); }, "commit", Vruta::Processing
   - So the game step on the graphics thread reads each node's `get_target_value()` (atomic) once per frame.
   - Don't call `get_frame()` from the graphics thread: it copies a plain array the input thread writes. If the step needs the whole frame, hand it over through a `SnapshotCell` from `on_frame`.
   - Pass `SmoothingMode::NONE` for direct control. The default exponential smoothing steps once per report.
+- **Since 19 Nov (in the nightly):**
+  - `read_tablet(config)` with no binding opens a picker over the tablet tools. It blocks, so call it from `compose()` (`API/Proxy/Creator.hpp`).
+  - `set_tuning(InputTuning { ... })` changes the smoothing mode, factor and slew rate while the node runs, from any thread (`Nodes/Input/InputNode.hpp`). Useful for tuning the pen's feel during playtests.
+  - The parser reads fields only from a Digitizer or Pen top-level collection, so a tablet's mouse interface is no longer taken for a second pen. Probing no longer opens keyboards or mice.
 - **Three mappings to try:**
   1. Tilt as a joystick, with pressure as speed. The pen leaving proximity stops the player.
   2. The tablet as the map: `X`, `Y` is where to head in the maze, pressure is how fast, and hovering shows a ghost.
@@ -284,8 +316,14 @@ schedule_metro(1.0 / 60.0, [&] { fabric.commit(); }, "commit", Vruta::Processing
 - **Moving the camera:**
   - The step writes the `Locus` navigation state (`nav().eye`, `yaw`, `pitch`) directly. With no movement flags held, `advance_navigation` leaves the eye where the step put it, and the Locus builds the view from it.
   - Collision is a check of the proposed position against the maze grid before writing it.
-- **Access:** `/dev/hidraw*` is root-only by default on Linux, so a udev rule is needed (see the README). macOS needs the Input Monitoring permission.
-- **The pen also drives the desktop pointer.** The Wayland backend has no tablet protocol, so the compositor will probably also emulate a pointer from the pen, and the game window will get mouse events while the pen moves. Ignore mouse input while the `proximity()` node reads 1. This is a question in discussion #192.
+- **Access:** `/dev/hidraw*` is root-only by default on Linux, so a udev rule is needed.
+  - MayaFlux now ships one, `data/udev/70-mayaflux-hid.rules`, and the nightly package installs it to `/usr/lib/udev/rules.d`.
+  - It gives the seat's user access to Wacom, XP-Pen/UGEE, Huion, UC-Logic, VEIKK, Genius and Hanvon tablets and other UC-Logic rebrands.
+  - The hand-written rule in the README is needed only with an older nightly or a tablet the file doesn't list.
+  - macOS needs the Input Monitoring permission.
+- **The pen also drives the desktop pointer.** The Wayland backend has no tablet protocol, so the compositor will probably also emulate a pointer from the pen, and the game window will get mouse events while the pen moves. Ignore mouse input while the `proximity()` node reads 1. This is a question in discussion #192, with no reply yet.
+  - Still open, in the nightly and on develop. The build generates the Wayland tablet protocol header, which the cursor-shape protocol refers to, but the Wayland backend doesn't read tablet events.
+  - MayaFlux's udev file has an optional, commented-out rule that unbinds the mouse interface of a UGEE/XP-Pen tablet, so the pen stops moving the cursor for that model.
 
 ## 7. Game UI with Forma
 
@@ -324,9 +362,9 @@ Paths in this section are relative to `Portal/Forma/` unless they say otherwise.
 ### What the game has to build
 
 - **Keyboard and gamepad navigation.**
-  - Focus is set only by a mouse press (`Context.cpp:510`), and there's no `set_focus`.
+  - On 15 Nov focus was set only by a mouse press (`Context.cpp:510`). Since the 19 Nov nightly, `Context::set_focus` sets it from code (#190, PR #193).
   - Key callbacks reach only the focused element.
-  - So for menus, keep your own selected index, repaint on up/down, and call the action on confirm. Read keys from the window: Kriya key events, or poll `WindowEventSource::is_key_pressed` (section 6).
+  - So for menus, keep your own selected index, move focus with `set_focus` on up/down, and call the action on confirm. Read keys from the window: Kriya key events, or poll `WindowEventSource::is_key_pressed` (section 6).
 - **Click-through.**
   - Window events go to every listener (`Vruta/WindowEventSource.cpp`), and Forma can't mark one as handled.
   - So check `ctx.hovered()` (`Context.hpp`), or a "menu open" flag, before a game click acts.
@@ -353,11 +391,16 @@ Paths in this section are relative to `Portal/Forma/` unless they say otherwise.
 - **Assimp** (`IO/Model/ModelReader.*`) reads glTF, OBJ, FBX, PLY, STL, DAE and anything else Assimp supports.
   - It produces one `MeshData` per mesh (68-byte `MeshVertex`).
   - Its import flags are Triangulate, GenSmoothNormals, CalcTangentSpace, FlipUVs, JoinIdenticalVertices and SortByPType (`ModelReader.cpp:256-261`). It loads diffuse textures through a resolver.
-  - It doesn't read the scene graph's node transforms or use PreTransformVertices. A model whose parts are placed by its scene graph loads with each part at its own origin (read, not tested).
+  - In the nightly it doesn't read the scene graph's node transforms or use PreTransformVertices. A model whose parts are placed by its scene graph loads with each part at its own origin (read, not tested). On develop `create_mesh_network` reads the node tree (below).
   - Animations are only counted (`ModelInfo::animation_count`). No bones or skinning are imported.
 - **MeshNetwork: the model as a scene** (`Nodes/Network/MeshNetwork.hpp`, `MeshSlot.hpp`). `create_mesh_network(resolver)` makes one named `MeshSlot` per mesh, with its own `MeshWriterNode` and diffuse texture.
   - **Slots can form a parent tree.** Each has a `local_transform`, and `world_transform = parent_world * local` is resolved parents first.
-  - **ModelReader fills none of it.** It adds every slot as a root with an identity transform (`ModelReader.cpp`, `create_mesh_network`). So the file's placement goes in by hand (`find_slot(name)`, then set the parent, `local_transform` and `dirty`), or by a small upstream change that walks `aiNode` into the slots.
+  - **In the nightly, ModelReader fills none of it.** It adds every slot as a root with an identity transform (`ModelReader.cpp`, `create_mesh_network`). So the file's placement goes in by hand (`find_slot(name)`, then set the parent, `local_transform` and `dirty`).
+  - **On develop it does** (`f5482926`, #189):
+    - There is one slot per node, named from the node and parented as the tree is, with the node's transform as `local_transform` and `world_transform` already resolved.
+    - A node with no mesh becomes a joint slot, and a node's extra meshes become child slots.
+    - Nexus `Survey` reads the network through those transforms (`MeshNetwork::get_world_mesh_data`), so `Hull` and `Attachment` match the drawn model.
+    - So a maze modelled in Blender, or exported as glTF or FBX from another engine, loads with each room in place.
   - **`MeshTransformOperator`** (the primary operator) drives a slot's local transform from a field of time, `std::function<glm::mat4(float)>`, and propagates world transforms down the tree. That covers jointed parts and procedural animation, though not skinning. `Nexus::bind_transform(op, slot)` feeds it from an Agent's influence (`Nexus/Pheme/FieldTargets.hpp`).
   - **`MeshFieldOperator`** (in the operator chain) deforms each slot's vertices: POSITION, COLOR, NORMAL, TANGENT, UV and scalar fields, from `Kinesis` fields.
     - The CPU path is a per-slot `FieldOperator`. It takes an `MF_FIELD` field's `.cpu` half (`Kinesis/Tendency/DualField.hpp:73-84`).
@@ -371,8 +414,45 @@ Paths in this section are relative to `Portal/Forma/` unless they say otherwise.
   - It runs through `NetworkGeometryBuffer` and `VertexFieldProcessor` (`Buffers/Network/NetworkGeometryFieldWiring.cpp`), not through MeshNetwork.
   - `Nexus::bind_params(op)` lets an Agent drive its parameters every frame with no rebuild. For a game: sparks, dust, swarms and smoke that react to bodies and players. Feed it Jolt positions through `set_params` or a field's inputs; the particles themselves stay outside Jolt.
 - **Writing models:** `AssimpModelWriter`, and `save_mesh` in `API/Depot.hpp`.
-- **Alembic** (`IO/Spatial/SpatialCache.hpp`, `SpatialReader.hpp`) handles points streams (ids, velocities) and curves streams over time, with attributes, in Ogawa or HDF5. It has no polymesh or transform objects. It's good for recording and replaying a simulation, not for importing animated characters.
+- **Alembic** (`IO/Spatial/SpatialCache.hpp`, `SpatialReader.hpp`) handles points streams (ids, velocities) and curves streams over time, with attributes, in Ogawa or HDF5. It has no polymesh or transform objects. It's good for recording and replaying a simulation, not for importing animated characters. `SpatialReader` reads one sample at a time into its own storage, from one thread.
 - **Also available:** OpenVDB volumes, EXR and other images, video and audio files.
+
+### Playing recorded assets: Course and Reflow (develop, 22 Nov)
+
+Headers read in full; not run.
+
+- **`FrameSource<Frame>`** (`Kakshya/FrameSource.hpp`): frames in order, each with a time. A frame never changes after it's made, and `read(i)` may be called from any thread. `ResidentFrames` holds every frame in memory.
+- **`TimeSampling`** (`Kinesis/Temporal/TimeSampling.hpp`): the frame times, as uniform steps, a repeating cycle or a list. These are the same three shapes Alembic uses.
+- **`TimedValues<T>`** (`Kinesis/Temporal/TimedValues.hpp`): keyed values sampled at any time, with step, linear (slerp for rotations) and glTF-style cubic keys. `as_tendency()` turns them into a function of time for fields and Nexus.
+- **`SequenceContainer<Frame>`** (`Kakshya/Semantic/SequenceContainer.hpp`): the container face of a FrameSource. A region is a frame range. Its docs say a volume sequence, a spatial cache and a mesh scene differ only in the source they wrap.
+- **`Course`** (`Kriya/Course.hpp`): one playhead.
+  - Settings: speed (negative runs backwards), offset, range, edge (`Once`, `Hold`, `Loop`, `PingPong`), loop count, a time map, repeat and weight. Any thread may write them, and each frame reads them once.
+  - Commands, applied at the next frame: `start`, `pause`, `stop`, `retrigger`, `seek`, `seek_clock`, `seek_normalized`, `nudge`.
+  - State, readable at any time: time, progress, finished, frame, misses.
+  - Events through `subscribe(kind)`: `Finished`, `Crossed`, `Repeated`, `Frame`, `Missed`.
+  - `time_at(extra_offset)` gives the time as if offset further, for one part of an asset that runs ahead or behind.
+- **`Reflow<Frame>`** (`Kriya/Reflow.hpp`, `Kriya/ReflowHelpers/Reflow.inl`): the player. Each cycle:
+  1. Every course advances and picks frames (`Floor`, `Nearest` or `Blend`).
+  2. The picks are mixed by a mix operation, or the heaviest wins.
+  3. The frame operations run (transform, derive, condition).
+  4. The sink receives the frame.
+  `ReflowBuilder::start()` runs it as a FRAME_ACCURATE metro, so on the graphics thread.
+- **VDB now:**
+  - `IO::open_volume_sequence` reads numbered `.vdb` files lazily (`IO/Volume/VolumeSequence.hpp`).
+  - `create_volume_buffer` and `create_volume_reflow` (`API/Rigs.hpp`) play them into a `VolumeGridBuffer` through `volume_sink`.
+  - `evolve` has an entry that also attaches rendering.
+- **Not there yet:**
+  - a FrameSource for Alembic
+  - animation import in ModelReader
+  - sinks other than the volume one
+
+**What it gives the game:**
+- **Movement as the playhead.** A tablet value can steer a course: pressure as speed, the pen lifted as pause, distance along a corridor as `seek_normalized`. An animation modelled in Blender then moves with the player instead of on a timer.
+- **Rooms steer courses.** Entering an Expanse starts or retriggers one. Leaving sets speed to -1, so the room undoes itself behind the player.
+- **Courses fire entities.** `fabric.wire(e).on(course->subscribe(Kriya::CourseEventKind::Finished)).finalise()` fires an entity when, say, a door has finished opening. A course signals its events from the routine that advances it, which is the graphics thread for a started reflow.
+- **Sensors set the tempo.** Course settings take writes from any thread, so a hook on a serial or OSC node can set speed directly, for example a heartbeat setting the world's pace.
+- **Parts lag each other.** `time_at` per part, offset by distance from the player, sends a ripple down a corridor.
+- **Volumes now.** Fog or smoke from Houdini or Blender, as a `.vdb` sequence, played and steered the same way.
 
 ## 9. Files read in this pass
 
@@ -411,3 +491,24 @@ Paths in this section are relative to `Portal/Forma/` unless they say otherwise.
 - Not read: the `.cpp` files of these operators, `NetworkGeometryFieldWiring.cpp`, `VertexFieldProcessor`.
 
 **Jolt.** The GitHub releases page, `Build/CMakeLists.txt` and `Jolt/Jolt.cmake` on master (15 Nov 2026).
+
+**Nightly check (22 Nov).** All 809 installed headers match main `0f71ff55` byte for byte. The package installs `/usr/lib/udev/rules.d/70-mayaflux-hid.rules`, the same file as on develop.
+
+**Added on 22 Nov (develop `4d6fbcc1`).**
+- Read in full:
+  - `Kakshya/FrameSource.hpp`, `Kakshya/Semantic/SequenceContainer.hpp`
+  - `Kinesis/Temporal/TimeSampling.hpp`, `Kinesis/Temporal/TimedValues.hpp`
+  - `IO/Volume/VolumeSequence.hpp`
+  - `Kriya/Course.hpp`, `Kriya/ReflowHelpers/CourseTime.hpp`, `Kriya/Reflow.hpp`, `Kriya/ReflowHelpers/Reflow.inl`, `Kriya/FrameOperation.hpp`, `Kriya/ReflowHelpers/ReflowSelect.hpp`, `Kriya/VolumeReflow.hpp` and `.cpp`
+  - `Core/Input/SerialSpec.hpp`, `Nodes/Input/SerialNode.hpp`
+  - `IO/Model/ModelReader.hpp`, `IO/Spatial/SpatialReader.hpp`
+  - `Nexus/Principals/Locus.hpp`, `Nexus/Quantity.hpp`
+- Read in part:
+  - `IO/Volume/VolumeSequence.cpp` (`read`)
+  - `Nexus/Controls.hpp`, `Nexus/Principals/Agent.hpp` (controls), `Nexus/Wiring.hpp` (triggers), `Nexus/Fabric.hpp` (`fire`, `set_all`, `set_each`, `set_within`)
+  - `Core/GlobalInputConfig.hpp` (serial, OSC), `Core/GlobalNetworkConfig.hpp` (framing), `SerialInputBackend.hpp`
+  - `InputSubsystem.cpp` (serial), `InputManager.cpp` (OSC bridge)
+  - `API/Input.hpp` (serial), `API/Proxy/Creator.hpp` (`read_tablet`), `API/Rigs.hpp`, `Nodes/Input/InputNode.hpp` (`InputTuning`)
+  - the threading table in `docs/Digital_Architecture.md`
+- Commit messages and header diffs only: HID by usage, the tablet backend fixes, the udev rules, the Wayland and Win32 cursor modes, the network and Unix-socket work, Lila, and the Survey fixes.
+- Not read: `Course.cpp`, `CourseTime.cpp`, `TimeSampling.cpp`, the serial device and link code, and the network backends.
