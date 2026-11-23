@@ -3,6 +3,8 @@
 
 #include "MayaFlux/MayaFlux.hpp"
 
+#include "MazeView.hpp"
+
 /**
  * @brief Engine configuration, run once before Init().
  *
@@ -17,10 +19,17 @@ void settings()
 /**
  * @brief Builds the game. Runs once after Start().
  *
- * Empty for now. The first steps are listed in README.md.
+ * Shows data/maze.txt in 3D, reloading when the editor saves it. The next
+ * steps are listed in README.md.
  */
 void compose()
 {
+    constexpr auto frame = MayaFlux::Vruta::ProcessingToken::FRAME_ACCURATE;
+    static game::MazeView* view = nullptr;
+    const auto path = std::filesystem::path(MayaFlux::Config::project_root()) / "data" / "maze.txt";
+
+    MayaFlux::schedule_sequence({ { 0.1, [path] { view = game::MazeView::open(path); } } }, "maze_view_open", frame);
+    MayaFlux::schedule_metro(0.25, [] { if (view) view->reload_if_changed(); }, "maze_view_reload", frame);
 }
 
 // NOLINTEND
