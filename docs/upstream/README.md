@@ -1,6 +1,6 @@
 # Requests to MayaFlux
 
-Filed on 15 Nov 2026 from these files. Edits made on GitHub after that are not copied back here.
+Filed from these files, on 15 Nov 2026 unless the row says otherwise. Edits made on GitHub after that are not copied back here.
 
 | File | Filed as |
 |---|---|
@@ -12,10 +12,11 @@ Filed on 15 Nov 2026 from these files. Edits made on GitHub after that are not c
 | `discussion-game-on-nexus.md` | [Discussion #192](https://github.com/orgs/MayaFlux/discussions/192), category Ideas. Retitled and edited on 15 Nov for tablet navigation: "A maze game on MayaFlux: Nexus as the entry point, navigated with a drawing tablet" |
 | `pr-forma-set-focus.md` | [PR #193](https://github.com/MayaFlux/MayaFlux/pull/193) Forma: set keyboard focus from code (Context::set_focus). Closes #190. Branch `kdlydia/MayaFlux:forma-set-focus`, based on main. Description updated on 16 Nov for the second commit |
 | `pr-forma-set-focus-reply-1.md` | [Reply on #193](https://github.com/MayaFlux/MayaFlux/pull/193#issuecomment-6921023278) to the 16 Nov review (changes requested: focus callbacks that move focus). Fixed in `b70fab2a` |
+| `05-phase2-requests.md` | [#197](https://github.com/MayaFlux/MayaFlux/issues/197) Part 2 of #196: requests from a maze game (a Locus that plays file cameras, timed weight fades, named markers). Filed on 24 Nov; follow-up comment with items 6–11 on 25 Nov |
 
 To follow them:
 
 ```sh
-for n in 188 189 190 191; do gh issue view $n --repo MayaFlux/MayaFlux --json number,state,comments --jq '"\(.number) \(.state) comments=\(.comments|length)"'; done
+for n in 188 189 190 191 197; do gh issue view $n --repo MayaFlux/MayaFlux --json number,state,comments --jq '"\(.number) \(.state) comments=\(.comments|length)"'; done
 gh api graphql -f query='{ repository(owner:"MayaFlux", name:"MayaFlux"){ discussion(number:192){ comments(first:20){ totalCount nodes{ author{login} body } } } } }'
 ```

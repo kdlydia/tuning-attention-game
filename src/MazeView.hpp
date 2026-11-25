@@ -118,10 +118,37 @@ public:
         std::string error;
         if (auto maze = Maze::load(m_path, error)) {
             place(*maze);
-            MF_PRINT("maze view: reloaded {}x{}", maze->cols, maze->rows);
+            m_maze = std::move(*maze);
+            MF_PRINT("maze view: reloaded {}x{}", m_maze.cols, m_maze.rows);
         } else {
             MF_PRINT("maze view: keeping the last maze, {}", error);
         }
+    }
+
+    [[nodiscard]] const std::shared_ptr<MayaFlux::Core::Window>& window() const { return m_window; }
+
+    /** @brief The fly camera's view, for anything else drawn in this window. */
+    [[nodiscard]] std::function<MayaFlux::Kinesis::ViewTransform()> view_source() const
+    {
+        return m_walls->get_render_processor()->get_view_transform_source();
+    }
+
+    /** @brief The middle of the floor cell nearest the maze's centre, at floor height, or the centre if every cell is a wall. */
+    [[nodiscard]] glm::vec3 floor_near_center() const
+    {
+        std::optional<glm::vec3> best;
+        for (size_t row = 0; row < m_maze.rows; ++row) {
+            for (size_t col = 0; col < m_maze.cols; ++col) {
+                if (m_maze.is_wall(row, col)) {
+                    continue;
+                }
+                const glm::vec3 position = cell_position(m_maze, row, col);
+                if (!best || glm::length(position) < glm::length(*best)) {
+                    best = position;
+                }
+            }
+        }
+        return best.value_or(glm::vec3(0.0F));
     }
 
 private:
@@ -134,6 +161,7 @@ private:
 
     std::filesystem::path m_path;
     std::filesystem::file_time_type m_seen {};
+    Maze m_maze;
     std::shared_ptr<MayaFlux::Core::Window> m_window;
     Layer m_floor;
     Layer m_walls;
@@ -159,6 +187,7 @@ private:
             return false;
         }
         place(maze);
+        m_maze = maze;
 
         const float span = static_cast<float>(std::max(maze.rows, maze.cols)) * cell;
         const MayaFlux::Kinesis::NavigationConfig camera {
@@ -201,6 +230,16 @@ private:
 
     static glm::mat4 hidden() { return glm::scale(glm::mat4(1.0F), glm::vec3(0.0F)); }
 
+    /** @brief The middle of a cell at floor height. */
+    static glm::vec3 cell_position(const Maze& maze, size_t row, size_t col)
+    {
+        return {
+            (static_cast<float>(col) - static_cast<float>(maze.cols - 1) / 2) * cell,
+            0.0F,
+            (static_cast<float>(row) - static_cast<float>(maze.rows - 1) / 2) * cell,
+        };
+    }
+
     Layer make_layer(std::shared_ptr<MayaFlux::Nodes::GpuSync::MeshWriterNode> shape, size_t count) const
     {
         MayaFlux::StructureConfig::Instances instances {};
@@ -232,12 +271,7 @@ private:
                 const size_t row = i / maze.cols;
                 const size_t col = i % maze.cols;
                 if (!walls_only || maze.is_wall(row, col)) {
-                    const glm::vec3 position {
-                        (static_cast<float>(col) - static_cast<float>(maze.cols - 1) / 2) * cell,
-                        0.0F,
-                        (static_cast<float>(row) - static_cast<float>(maze.rows - 1) / 2) * cell,
-                    };
-                    slot.transform = glm::translate(glm::mat4(1.0F), position);
+                    slot.transform = glm::translate(glm::mat4(1.0F), cell_position(maze, row, col));
                 }
             }
             slot.dirty = true;
