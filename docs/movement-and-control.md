@@ -2,6 +2,8 @@
 
 Tunnel Chimera plays our two walks through the MIT tunnels (trips 2.1 and 2.2) with a drawing tablet: both the pictures and the sound recorded with them. Trial video and background: [tunnel-chimera.md](tunnel-chimera.md).
 
+Demo with sound (one minute): [videos/tunnel-chimera-take-2.mp4](videos/tunnel-chimera-take-2.mp4). MayaFlux recorded both the window and its own sound output, so nothing else from the computer is in it.
+
 **The idea:** the pen doesn't point at things or move a playhead. Its movement *is* the time of the piece.
 - The walks only move forward as far as the pen moves. Holding still holds everything.
 - What you see and hear depends on *how* the pen moves: slow or fast, light or heavy, upright or tilted, smooth or scribbling. It depends much less on where the pen is.

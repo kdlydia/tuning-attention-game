@@ -2,6 +2,8 @@
 
 Trial video: [videos/tunnel-chimera-trial-1.mp4](videos/tunnel-chimera-trial-1.mp4). This is a window recording of the first version, about 3 minutes long and without sound.
 
+Demo with sound: [videos/tunnel-chimera-take-2.mp4](videos/tunnel-chimera-take-2.mp4). This one minute was recorded by MayaFlux itself: the window and the program's own sound.
+
 The two tunnel walks (trips 2.1 and 2.2) are played with a drawing tablet. The circle drawn over the picture is the pen. Its legend is at the end of this page. The code isn't in this repo yet.
 
 MayaFlux is open and programmable all the way down, but that isn't the main point here. The main point is two differences:
