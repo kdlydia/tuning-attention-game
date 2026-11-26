@@ -36,7 +36,7 @@ void compose()
     MayaFlux::schedule_sequence({ { 0.1, [path] {
         view = game::MazeView::open(path);
         if (view) {
-            game::Creature::open(view->window(), view->view_source(), view->floor_near_center());
+            game::Creature::open(view->window(), view->view(), view->floor_near_center());
             MayaFlux::get_event_manager()->add_event(
                 std::make_shared<MayaFlux::Vruta::Event>(MayaFlux::Kriya::window_closed(view->window(), [] { MayaFlux::Unblock(); })),
                 "game_view_closed");

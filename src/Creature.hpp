@@ -45,7 +45,7 @@ public:
      */
     static Creature* open(
         const std::shared_ptr<MayaFlux::Core::Window>& window,
-        const std::function<MayaFlux::Kinesis::ViewTransform()>& view,
+        const std::shared_ptr<MayaFlux::Memory::OwnedCell<MayaFlux::Kinesis::Viewpoint>>& view,
         glm::vec3 position)
     {
         auto* creature = new Creature();
@@ -68,7 +68,7 @@ private:
     std::shared_ptr<MayaFlux::Kriya::MotionReflow> m_reflow;
 
     bool build(const std::shared_ptr<MayaFlux::Core::Window>& window,
-        const std::function<MayaFlux::Kinesis::ViewTransform()>& view,
+        const std::shared_ptr<MayaFlux::Memory::OwnedCell<MayaFlux::Kinesis::Viewpoint>>& view,
         glm::vec3 position)
     {
         namespace Kakshya = MayaFlux::Kakshya;
@@ -93,13 +93,14 @@ private:
             joints.push_back(*row);
         }
 
-        auto body = make_body(joints);
-        if (!body) {
+        auto body = make_body();
+        const auto skeleton = m_assembly->add_skeleton(joints);
+        if (!body || !skeleton) {
             MF_PRINT("creature: the body mesh or its skin is not valid");
             return false;
         }
         const auto source = m_assembly->add_source(std::move(*body));
-        if (!m_assembly->add_placement({ .name = "body", .parent = *root, .source = source })) {
+        if (!m_assembly->add_placement({ .name = "body", .parent = *root, .source = source, .skeleton = *skeleton })) {
             return false;
         }
 
@@ -128,7 +129,7 @@ private:
         });
         for (const auto& part : m_realization->parts()) {
             if (part.network_buffer) {
-                part.network_buffer->get_render_processor()->set_view_transform_source(
+                part.network_buffer->get_render_processor()->set_view_cell(
                     view, true, MayaFlux::Portal::Graphics::CullMode::NONE);
             }
         }
@@ -146,9 +147,10 @@ private:
     /**
      * @brief The tube, coloured from a deep base to a pale tip with darker rings, and its skin.
      *
-     * The mesh shader has no lighting, so a fixed light is baked into the colours.
+     * The mesh shader has no lighting, so a fixed light is baked into the colours. The skin
+     * names joints 0 to joint_count - 1; the body's skeleton says which rows they are.
      */
-    static std::optional<MayaFlux::Kakshya::MeshAssemblySource> make_body(const std::vector<uint64_t>& joints)
+    static std::optional<MayaFlux::Kakshya::MeshAssemblySource> make_body()
     {
         namespace Kakshya = MayaFlux::Kakshya;
 
@@ -167,7 +169,6 @@ private:
         std::memcpy(vertices.data(), bytes->data(), bytes->size());
 
         Kakshya::MeshSkin skin;
-        skin.joints = joints;
         for (size_t j = 0; j < joint_count; ++j) {
             skin.inverse_bind.push_back(glm::translate(glm::mat4(1.0F), { 0.0F, -segment * static_cast<float>(j), 0.0F }));
         }

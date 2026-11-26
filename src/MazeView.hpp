@@ -127,10 +127,10 @@ public:
 
     [[nodiscard]] const std::shared_ptr<MayaFlux::Core::Window>& window() const { return m_window; }
 
-    /** @brief The fly camera's view, for anything else drawn in this window. */
-    [[nodiscard]] std::function<MayaFlux::Kinesis::ViewTransform()> view_source() const
+    /** @brief The fly camera's viewpoint, for anything else drawn in this window. */
+    [[nodiscard]] const std::shared_ptr<MayaFlux::Memory::OwnedCell<MayaFlux::Kinesis::Viewpoint>>& view() const
     {
-        return m_walls->get_render_processor()->get_view_transform_source();
+        return m_view.first;
     }
 
     /** @brief The middle of the floor cell nearest the maze's centre, at floor height, or the centre if every cell is a wall. */
@@ -165,6 +165,7 @@ private:
     std::shared_ptr<MayaFlux::Core::Window> m_window;
     Layer m_floor;
     Layer m_walls;
+    MayaFlux::ViewportBinding m_view;
 
     bool build(const Maze& maze)
     {
@@ -196,9 +197,8 @@ private:
             .near_plane = 0.1F,
             .move_speed = 10.0F,
         };
-        auto walls_view = m_walls->get_render_processor();
-        MayaFlux::bind_fly_preset(m_window, walls_view, camera, {}, "game_view");
-        m_floor->get_render_processor()->set_view_transform_source(walls_view->get_view_transform_source());
+        m_view = MayaFlux::bind_fly_preset(m_window, m_walls->get_render_processor(), camera, {}, "game_view");
+        m_floor->get_render_processor()->set_view_cell(m_view.first);
 
         std::error_code ec;
         m_seen = std::filesystem::last_write_time(m_path, ec);
