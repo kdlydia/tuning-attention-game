@@ -45,3 +45,7 @@ Nothing is encoded for a Hull, and a decoded Mantle is a plain box. If a buffer 
 
 **11. Solid cells in the flow stages** (maybe not small).
 `FlowConfig::walls` closes the six faces of the box. For smoke moving through a maze, a field marking solid cells, with velocity zeroed there and nothing carried in, would do, and an Expanse could fill it. Skip it if it isn't small.
+
+Reply, posted on 26 Nov after #198 closed this issue: https://github.com/MayaFlux/MayaFlux/issues/197#issuecomment-7198560799
+
+Thanks! Opened #199 for 9 and #200 for 11. Everything else we asked for is in #198.
