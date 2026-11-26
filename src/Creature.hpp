@@ -9,9 +9,13 @@
 #include "MayaFlux/Kinesis/GeometryPrimitives.hpp"
 #include "MayaFlux/Kriya/MotionReflow.hpp"
 #include "MayaFlux/Kriya/Realization/MeshAssemblyRealization.hpp"
+#include "MayaFlux/Kriya/ReflowHelpers/FrameBlend.hpp"
+#include "MayaFlux/Kriya/Tasks.hpp"
 
 #include <glm/gtc/quaternion.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <numbers>
 #include <optional>
@@ -25,7 +29,8 @@ namespace game {
  * Nothing comes from a file. Kinesis::generate_tube makes the body, the joints and their
  * motions are keyed here, and each vertex follows the two joints nearest its height. It plays
  * through the same path as a loaded glTF: a MeshAssembly, realized and skinned on the GPU,
- * moved by a MotionReflow.
+ * moved by a MotionReflow. The reflow blends the sway with the curl by how wary the creature
+ * is of whoever drives the view.
  */
 class Creature {
 public:
@@ -66,6 +71,15 @@ private:
     std::shared_ptr<MayaFlux::Kakshya::MeshAssemblyContainer> m_assembly;
     std::shared_ptr<MayaFlux::Kriya::MeshAssemblyRealization> m_realization;
     std::shared_ptr<MayaFlux::Kriya::MotionReflow> m_reflow;
+    std::shared_ptr<MayaFlux::Kriya::Course> m_sway;
+    std::shared_ptr<MayaFlux::Kriya::Course> m_curl;
+
+    std::shared_ptr<MayaFlux::Memory::OwnedCell<MayaFlux::Kinesis::Viewpoint>> m_view;
+    glm::vec3 m_center {};
+    std::optional<std::chrono::steady_clock::time_point> m_last;
+    std::optional<float> m_distance;
+    float m_wariness {};
+    bool m_curled {};
 
     bool build(const std::shared_ptr<MayaFlux::Core::Window>& window,
         const std::shared_ptr<MayaFlux::Memory::OwnedCell<MayaFlux::Kinesis::Viewpoint>>& view,
@@ -134,14 +148,61 @@ private:
             }
         }
 
-        const auto frames = Kakshya::MeshAssemblyMotionFrames::create(m_assembly, Sway);
-        if (!frames) {
+        const auto sway = Kakshya::MeshAssemblyMotionFrames::create(m_assembly, Sway);
+        const auto curl = Kakshya::MeshAssemblyMotionFrames::create(m_assembly, Curl);
+        if (!sway || !curl) {
             return false;
         }
-        m_reflow = Kriya::MotionReflowBuilder::sampling(frames, m_realization->placement_sink(), 0.0, MayaFlux::get_scheduler())
+        m_reflow = Kriya::MotionReflowBuilder::sampling(sway, m_realization->placement_sink(), 0.0, MayaFlux::get_scheduler())
                        .course({ .in = 0.0, .out = sway_period, .edge = Kriya::CourseEdge::Loop })
+                       .route({ .course = { .in = 0.0, .out = curl_period / 2, .edge = Kriya::CourseEdge::Hold }, .sampled = curl })
+                       .operation(Kriya::placement_blend(m_assembly))
                        .start();
-        return m_reflow != nullptr;
+        if (!m_reflow || m_reflow->courses().size() != 2) {
+            return false;
+        }
+
+        m_sway = m_reflow->courses()[0];
+        m_curl = m_reflow->courses()[1];
+        m_curl->weight(0.0);
+        m_curl->scrub([this] { return curl_period / 2 * m_wariness; });
+        m_view = view;
+        m_center = position + glm::vec3(0.0F, height / 2, 0.0F);
+        MayaFlux::get_scheduler()->add_task(Kriya::each_cycle([this] { watch(); }), "creature_watch");
+        return true;
+    }
+
+    /**
+     * @brief Follow the viewer: rushing at the creature from close by makes it wary within a
+     *        second, and anything calmer lets it ease over about eight. The more wary it is, the
+     *        further it curls and the less it sways.
+     */
+    void watch()
+    {
+        const auto now = std::chrono::steady_clock::now();
+        const float dt = m_last ? std::chrono::duration<float>(now - *m_last).count() : 0.0F;
+        m_last = now;
+
+        const float distance = glm::length(glm::vec3(m_view->read().first[3]) - m_center);
+        const float approach = m_distance && dt > 0.0F ? (*m_distance - distance) / dt : 0.0F;
+        m_distance = distance;
+        if (dt <= 0.0F || dt > 0.5F) {
+            return;
+        }
+
+        const float near = 1.0F - glm::smoothstep(2.0F, 8.0F, distance);
+        const float rush = glm::smoothstep(1.5F, 5.0F, approach);
+        m_wariness = std::clamp(m_wariness + dt * (2.0F * near * rush - m_wariness / 8.0F), 0.0F, 1.0F);
+        m_sway->weight(1.0 - m_wariness);
+        m_curl->weight(m_wariness);
+
+        if (!m_curled && m_wariness > 0.5F) {
+            m_curled = true;
+            MF_PRINT("creature: curls away");
+        } else if (m_curled && m_wariness < 0.2F) {
+            m_curled = false;
+            MF_PRINT("creature: eases");
+        }
     }
 
     /**
