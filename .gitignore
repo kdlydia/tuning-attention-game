@@ -18,3 +18,6 @@ cmake_install.cmake
 __pycache__/
 *.pyc
 
+
+# Third-party test assets (licensed, see each README); not committed
+assets/samples/

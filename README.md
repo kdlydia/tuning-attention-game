@@ -23,6 +23,8 @@ cmake --build --preset release --parallel
 
 `./validate.sh` checks the setup. `./run-report.sh` runs the game and saves its console output to `mayaflux_run.txt`.
 
+Models and textures in `assets/` are stored with Git LFS. Install `git-lfs` and run `git lfs install` once. After that, cloning or pulling fetches them; in a clone made without it, run `git lfs pull`.
+
 ## Tablet access
 
 The game reads the tablet directly through HID, so your user needs read access to `/dev/hidraw*`. On Linux, current MayaFlux nightlies install a udev rule for common tablets (Wacom, XP-Pen, Huion, UC-Logic, VEIKK, Genius, Hanvon) at `/usr/lib/udev/rules.d/70-mayaflux-hid.rules`. Load it and replug the tablet:
@@ -46,6 +48,9 @@ On macOS the app needs the Input Monitoring permission instead. The backend is t
 |---|---|
 | `src/user_project.hpp` | `settings()` and `compose()`, where the game is built |
 | `src/main.cpp` | Weave launcher, unchanged |
+| `src/scene/` | The scene the game and the editor share: loading models into it, and a player for their animations |
+| `editor/` | The editor: maze, assets and animation player windows (Rust on Forma), with the game view |
+| `assets/` | Models and textures (Git LFS); `assets/samples/` holds licensed test files and isn't committed |
 | `cmake/` | MayaFlux discovery, shaders, community modules (Weave) |
 | `docs/DESIGN.md` | How MayaFlux fits this game, read from the MayaFlux source |
 | `docs/upstream/` | Feature requests (MayaFlux #188–#191) and a discussion (#192) filed for this game |
