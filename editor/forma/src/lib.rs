@@ -61,13 +61,26 @@ mod ffi {
 
         type Surface;
         type Target;
+        type Text;
 
         fn create_surface(title: &str, width: u32, height: u32) -> Result<SharedPtr<Surface>>;
         fn slice(self: &Surface, topology: Topology) -> UniquePtr<Target>;
         fn add_element(self: &Surface, name: &str, min: Vec2, max: Vec2, target: &Target) -> u32;
+        fn add_text(
+            self: &Surface,
+            name: &str,
+            min: Vec2,
+            max: Vec2,
+            text: &str,
+            color: [f32; 4],
+            background: [f32; 4],
+        ) -> UniquePtr<Text>;
         fn on_press(self: &Surface, id: u32, button: MouseButton, callback: Box<PressFn>);
+        fn on_drag(self: &Surface, id: u32, button: MouseButton, callback: Box<PressFn>);
         fn inject_press(self: &Surface, ndc: Vec2, button: MouseButton);
         fn submit(self: &Target, vertices: &[Vertex]);
+        fn id(self: &Text) -> u32;
+        fn set(self: &Text, text: &str, color: [f32; 4], background: [f32; 4]);
         fn print(message: &str);
     }
 }
@@ -103,14 +116,41 @@ impl Surface {
         self.0.add_element(name, min, max, &target.0)
     }
 
+    /// Add a line of text filling `min`..`max`, over `background`. Its pixel size is fixed
+    /// from the window's size now. It takes no presses; put an element under it for that.
+    pub fn add_text(&self, name: &str, min: Vec2, max: Vec2, text: &str, color: [f32; 4], background: [f32; 4]) -> Text {
+        Text(self.0.add_text(name, min, max, text, color, background))
+    }
+
     /// Run `f` with the element id and the pointer in NDC when `button` is pressed over `id`.
     pub fn on_press(&self, id: u32, button: MouseButton, f: impl FnMut(u32, Vec2) + 'static) {
         self.0.on_press(id, button, Box::new(PressFn(Box::new(f))));
     }
 
+    /// Run `f` with the element id and the pointer in NDC while `button` drags from `id`.
+    /// The pointer may be outside the element.
+    pub fn on_drag(&self, id: u32, button: MouseButton, f: impl FnMut(u32, Vec2) + 'static) {
+        self.0.on_drag(id, button, Box::new(PressFn(Box::new(f))));
+    }
+
     /// Feed the window a pointer move to `ndc`, then a press and release of `button`.
     pub fn inject_press(&self, ndc: Vec2, button: MouseButton) {
         self.0.inject_press(ndc, button);
+    }
+}
+
+/// A line of text added with `Surface::add_text`.
+pub struct Text(cxx::UniquePtr<ffi::Text>);
+
+impl Text {
+    /// The element id.
+    pub fn id(&self) -> u32 {
+        self.0.id()
+    }
+
+    /// Replace the text and its colours.
+    pub fn set(&self, text: &str, color: [f32; 4], background: [f32; 4]) {
+        self.0.set(text, color, background);
     }
 }
 

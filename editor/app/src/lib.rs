@@ -1,13 +1,21 @@
 //! The game editor. The C++ host calls `editor_start` once and `editor_frame` every frame,
 //! both on the graphics thread. Each tool is its own window.
 //!
-//! The maze window: click a cell to toggle a wall. Every edit is saved to the game's
-//! `data/maze.txt` (format in `maze.rs`).
+//! - The maze window: click a cell to toggle a wall. Every edit is saved to the game's
+//!   `data/maze.txt` (format in `maze.rs`).
+//! - The assets window (`assets.rs`): the files under the game's `assets/`. Click one to
+//!   load it into the scene drawn in the game view.
+//! - The player window (`player.rs`): the motions of a loaded asset and their transport.
 
+mod assets;
 mod maze;
+mod player;
+mod ui;
 
+use assets::AssetsWindow;
 use forma::{MouseButton, Surface, Target, Topology, Vec2, Vertex};
 use maze::Maze;
+use player::{PlayerWindow, CONTROL_ORDER};
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
@@ -19,6 +27,8 @@ const NEW_MAZE_SIZE: usize = 16;
 
 struct Editor {
     maze: MazeWindow,
+    assets: Option<AssetsWindow>,
+    player: Option<PlayerWindow>,
     frames: u64,
 }
 
@@ -28,6 +38,70 @@ impl Editor {
         if self.frames == 1 {
             forma::print("editor: frame hook running");
         }
+        if let Some(player) = self.player.as_mut() {
+            player.frame();
+        }
+    }
+}
+
+/// Load the file on a row of the assets window, then show it in the player. The editor is
+/// not borrowed while the scene loads.
+fn load_row(editor: &'static RefCell<Editor>, row: usize) {
+    let file = editor.borrow().assets.as_ref().and_then(|a| a.file(row)).map(Path::to_path_buf);
+    let Some(file) = file else {
+        return;
+    };
+    let Some(asset) = scene::load(&file) else {
+        forma::print(&format!("editor: could not load {}", file.display()));
+        return;
+    };
+    let mut editor = editor.borrow_mut();
+    if let Some(assets) = editor.assets.as_ref() {
+        assets.redraw();
+    }
+    if let Some(player) = editor.player.as_mut() {
+        player.show(asset);
+    }
+}
+
+/// Take the copy of a row's file loaded last out of the scene.
+fn remove_row(editor: &'static RefCell<Editor>, row: usize) {
+    let mut editor = editor.borrow_mut();
+    let Some(removed) = editor.assets.as_ref().and_then(|a| a.remove_last(row)) else {
+        return;
+    };
+    if let Some(player) = editor.player.as_mut() {
+        player.forget(removed);
+    }
+}
+
+/// Run `f` on the player window, if it opened.
+fn with_player(editor: &'static RefCell<Editor>, f: impl FnOnce(&mut PlayerWindow)) {
+    if let Some(player) = editor.borrow_mut().player.as_mut() {
+        f(player);
+    }
+}
+
+/// Route the assets and player windows' presses and drags to the editor.
+fn bind_tools(editor: &'static RefCell<Editor>) {
+    let tools = editor.borrow();
+    if let Some(assets) = &tools.assets {
+        for (row, id) in assets.row_ids().into_iter().enumerate() {
+            assets.surface().on_press(id, MouseButton::Left, move |_, _| load_row(editor, row));
+            assets.surface().on_press(id, MouseButton::Right, move |_, _| remove_row(editor, row));
+        }
+    }
+    if let Some(player) = &tools.player {
+        let surface = player.surface();
+        for (row, id) in player.motion_ids().into_iter().enumerate() {
+            surface.on_press(id, MouseButton::Left, move |_, _| with_player(editor, |p| p.press_motion(row)));
+        }
+        for (id, control) in player.control_ids().into_iter().zip(CONTROL_ORDER) {
+            surface.on_press(id, MouseButton::Left, move |_, _| with_player(editor, |p| p.press_control(control)));
+        }
+        let track = player.track_id();
+        surface.on_press(track, MouseButton::Left, move |_, ndc| with_player(editor, |p| p.scrub(ndc)));
+        surface.on_drag(track, MouseButton::Left, move |_, ndc| with_player(editor, |p| p.scrub(ndc)));
     }
 }
 
@@ -71,10 +145,14 @@ thread_local! {
     static EDITOR: Cell<Option<&'static RefCell<Editor>>> = const { Cell::new(None) };
 }
 
-/// `data/maze.txt` in the game repo, two folders above this crate.
-fn maze_path() -> PathBuf {
+/// The game repo, two folders above this crate.
+fn game_root() -> PathBuf {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    crate_dir.ancestors().nth(2).unwrap_or(crate_dir).join("data/maze.txt")
+    crate_dir.ancestors().nth(2).unwrap_or(crate_dir).to_path_buf()
+}
+
+fn maze_path() -> PathBuf {
+    game_root().join("data/maze.txt")
 }
 
 /// The saved maze, a new bordered one (saved right away, so the game view has a file)
@@ -160,6 +238,16 @@ pub extern "C" fn editor_start() {
     grid.submit(&grid_vertices(&maze));
     let id = surface.add_element("maze_grid", GRID_MIN, GRID_MAX, &grid);
 
+    let assets = AssetsWindow::open(game_root().join("assets"))
+        .inspect_err(|error| forma::print(&format!("editor: could not open the assets window: {error}")))
+        .ok();
+    let mut player = PlayerWindow::open()
+        .inspect_err(|error| forma::print(&format!("editor: could not open the player window: {error}")))
+        .ok();
+    if let (Some(player), Some(last)) = (player.as_mut(), scene::asset_count().checked_sub(1)) {
+        player.show(last);
+    }
+
     let editor: &'static RefCell<Editor> = Box::leak(Box::new(RefCell::new(Editor {
         maze: MazeWindow {
             _surface: surface.clone(),
@@ -167,9 +255,12 @@ pub extern "C" fn editor_start() {
             maze,
             path,
         },
+        assets,
+        player,
         frames: 0,
     })));
     surface.on_press(id, MouseButton::Left, move |_, ndc| editor.borrow_mut().maze.press(ndc));
+    bind_tools(editor);
     EDITOR.with(|cell| cell.set(Some(editor)));
 }
 

@@ -14,8 +14,9 @@ find_package(MayaFlux REQUIRED
     NO_DEFAULT_PATH)
 find_package(Threads REQUIRED)
 
-# cargo builds the Rust workspace into one static library (app, with forma inside it), and
-# cxx writes the bridge headers (forma/src/lib.rs.h, rust/cxx.h) under <target>/cxxbridge.
+# cargo builds the Rust workspace into one static library (app, with forma and scene inside it),
+# and cxx writes the bridge headers (forma/src/lib.rs.h, scene/src/lib.rs.h, rust/cxx.h) under
+# <target>/cxxbridge.
 # The first cargo on PATH, so a rustup setup uses its own cargo and rustc together.
 # RUSTUP_AUTO_INSTALL=0 keeps a build from installing or updating a toolchain.
 # cargo runs on every build and decides itself whether anything changed.
@@ -27,16 +28,16 @@ set(RUST_LIB "${RUST_TARGET_DIR}/release/libapp.a")
 add_custom_target(editor_cargo
     COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${RUST_TARGET_DIR}" RUSTUP_AUTO_INSTALL=0
         ${CARGO} build --release --manifest-path "${CMAKE_SOURCE_DIR}/Cargo.toml" -p app
-    BYPRODUCTS "${RUST_LIB}" "${RUST_TARGET_DIR}/cxxbridge/forma/src/lib.rs.h"
+    BYPRODUCTS "${RUST_LIB}" "${RUST_TARGET_DIR}/cxxbridge/forma/src/lib.rs.h" "${RUST_TARGET_DIR}/cxxbridge/scene/src/lib.rs.h"
     COMMENT "Building the Rust workspace"
     USES_TERMINAL
     VERBATIM)
 
-add_executable(editor main.cpp forma/cpp/forma_shim.cpp)
+add_executable(editor main.cpp forma/cpp/forma_shim.cpp scene/cpp/scene_shim.cpp)
 add_dependencies(editor editor_cargo)
-# The game's own code (src/MazeView.hpp) runs in the editor's game view.
+# The game's own code (src/MazeView.hpp, src/scene/) runs in the editor's game view.
 cmake_path(GET CMAKE_SOURCE_DIR PARENT_PATH GAME_ROOT)
-target_include_directories(editor PRIVATE forma/cpp "${RUST_TARGET_DIR}/cxxbridge" "${GAME_ROOT}/src")
+target_include_directories(editor PRIVATE forma/cpp scene/cpp "${RUST_TARGET_DIR}/cxxbridge" "${GAME_ROOT}/src")
 target_precompile_headers(editor PRIVATE "${MayaFlux_PCH_FILE}")
 target_compile_definitions(editor PRIVATE MAYAFLUX_PROJECT MAYAFLUX_PROJECT_ROOT="${CMAKE_SOURCE_DIR}"
     GAME_MAZE_FILE="${GAME_ROOT}/data/maze.txt")
