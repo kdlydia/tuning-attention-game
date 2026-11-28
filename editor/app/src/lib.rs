@@ -6,6 +6,7 @@
 //! - The assets window (`assets.rs`): the files under the game's `assets/`. Click one to
 //!   load it into the scene drawn in the game view.
 //! - The player window (`player.rs`): the motions of a loaded asset and their transport.
+//!   It shows the asset chosen in the game view: left-click one there, or load one.
 
 mod assets;
 mod maze;

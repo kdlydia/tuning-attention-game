@@ -47,6 +47,8 @@ mod ffi {
         fn set_speed(asset: usize, value: f64);
         fn set_loop(asset: usize, looping: bool);
         fn state(asset: usize) -> PlayerState;
+        fn selected() -> i64;
+        fn select(asset: i64);
     }
 }
 
@@ -125,4 +127,14 @@ pub fn set_loop(asset: usize, looping: bool) {
 
 pub fn state(asset: usize) -> PlayerState {
     ffi::state(asset)
+}
+
+/// The asset chosen in the game view, by a click there or by `select`.
+pub fn selected() -> Option<usize> {
+    usize::try_from(ffi::selected()).ok()
+}
+
+/// Choose `asset` in the game view, which names it there, or nothing.
+pub fn select(asset: Option<usize>) {
+    ffi::select(asset.and_then(|a| i64::try_from(a).ok()).unwrap_or(-1));
 }

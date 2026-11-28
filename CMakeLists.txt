@@ -99,6 +99,14 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}")
 add_compile_definitions(MAYAFLUX_PROJECT)
 include(cmake/mayaflux)
 
+# Live coding (src/Live.hpp) is built in only while cmake/mayaflux.cmake links MayaFluxHost,
+# which Weave's "manage --with-lila" adds. Without it the game builds and runs as before.
+get_target_property(GAME_LINKS ${PROJECT_NAME} LINK_LIBRARIES)
+if("MayaFlux::MayaFluxHost" IN_LIST GAME_LINKS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE GAME_LIVE MAYAFLUX_LIVE)
+    message(STATUS "Live coding: on (MayaFluxHost linked)")
+endif()
+
 # ============================================================================
 # User Notes
 # ============================================================================

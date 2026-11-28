@@ -48,7 +48,7 @@ On macOS the app needs the Input Monitoring permission instead. The backend is t
 |---|---|
 | `src/user_project.hpp` | `settings()` and `compose()`, where the game is built |
 | `src/main.cpp` | Weave launcher, unchanged |
-| `src/scene/` | The scene the game and the editor share: loading models into it, and a player for their animations |
+| `src/scene/` | The scene the game and the editor share: loading models into it, a player for their animations, the sun and sky that light it, and choosing an asset by clicking it |
 | `editor/` | The editor: maze, assets and animation player windows (Rust on Forma), with the game view |
 | `assets/` | Models and textures (Git LFS); `assets/samples/` holds licensed test files and isn't committed |
 | `cmake/` | MayaFlux discovery, shaders, community modules (Weave) |

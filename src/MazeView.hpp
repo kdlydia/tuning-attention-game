@@ -2,7 +2,13 @@
 
 #include "MayaFlux/MayaFlux.hpp"
 
+#include "MayaFlux/Kinesis/Spatial/HitTest.hpp"
+#include "MayaFlux/Nexus/Pheme/InfluenceList.hpp"
+
+#include "Camera.hpp"
+
 #include <algorithm>
+#include <bit>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -71,13 +77,16 @@ struct Maze {
 };
 
 /**
- * @brief The maze drawn in its own window, with MayaFlux's fly camera:
- *        WASD and QE to move, right-drag to look, scroll to dolly.
+ * @brief The maze drawn in its own window, seen through a Camera: WASD and QE to move,
+ *        right-drag to look, scroll to dolly, B to let the eye under the floor.
  *
  * Every cell has a floor tile and a wall box, each one instance of a shared box, so the
  * floor and the walls are one draw each. A floor cell's wall is scaled to nothing.
  * Column runs along +X and row along +Z, so the camera starts south of the maze
  * looking north and the view matches the editor's grid.
+ *
+ * Both draw with MayaFlux's instance_lit shader, lit by whatever the given InfluenceList
+ * holds (the Scene puts the sun and the sky there), as rough, matte surfaces.
  */
 class MazeView {
 public:
@@ -86,10 +95,11 @@ public:
 
     /**
      * @brief Open the view in a new window. Call from a FRAME_ACCURATE task.
-     * @return The view, which lives until the process exits (like keep_alive()),
-     *         or null if the maze can't be read.
+     * @param lights What lights the floor and walls. Until something is put in it they are black.
+     * @return The view, kept in MayaFlux's persistent store until End() as "maze_view", or null
+     *         if the maze can't be read.
      */
-    static MazeView* open(std::filesystem::path path)
+    static MazeView* open(std::filesystem::path path, std::shared_ptr<MayaFlux::Nexus::InfluenceList> lights)
     {
         std::string error;
         auto maze = Maze::load(path, error);
@@ -98,11 +108,11 @@ public:
             return nullptr;
         }
 
-        auto* view = new MazeView(std::move(path));
+        auto view = std::shared_ptr<MazeView>(new MazeView(std::move(path), std::move(lights)));
         if (!view->build(*maze)) {
             return nullptr;
         }
-        return view;
+        return MayaFlux::store("maze_view", std::move(view)).get();
     }
 
     /** @brief Rebuild from the file if it changed since the last look. Call on the graphics thread. */
@@ -127,10 +137,10 @@ public:
 
     [[nodiscard]] const std::shared_ptr<MayaFlux::Core::Window>& window() const { return m_window; }
 
-    /** @brief The fly camera's viewpoint, for anything else drawn in this window. */
+    /** @brief The camera's viewpoint, for anything else drawn in this window. */
     [[nodiscard]] const std::shared_ptr<MayaFlux::Memory::OwnedCell<MayaFlux::Kinesis::Viewpoint>>& view() const
     {
-        return m_view.first;
+        return m_camera->view();
     }
 
     /** @brief The middle of the floor cell nearest the maze's centre, at floor height, or the centre if every cell is a wall. */
@@ -151,21 +161,46 @@ public:
         return best.value_or(glm::vec3(0.0F));
     }
 
+    /** @brief How far along @p ray it first meets a wall, or nullopt if it meets none. */
+    [[nodiscard]] std::optional<float> nearest_wall(const MayaFlux::Kinesis::Ray& ray) const
+    {
+        std::optional<float> nearest;
+        for (size_t row = 0; row < m_maze.rows; ++row) {
+            for (size_t col = 0; col < m_maze.cols; ++col) {
+                if (!m_maze.is_wall(row, col)) {
+                    continue;
+                }
+                const glm::vec3 at = cell_position(m_maze, row, col);
+                const MayaFlux::Kinesis::AABB3D box {
+                    .min = at - glm::vec3(cell / 2, 0.0F, cell / 2),
+                    .max = at + glm::vec3(cell / 2, wall_height, cell / 2),
+                };
+                const auto entry = box.ray_entry(ray);
+                if (entry && (!nearest || *entry < *nearest)) {
+                    nearest = entry;
+                }
+            }
+        }
+        return nearest;
+    }
+
 private:
-    explicit MazeView(std::filesystem::path path)
+    MazeView(std::filesystem::path path, std::shared_ptr<MayaFlux::Nexus::InfluenceList> lights)
         : m_path(std::move(path))
+        , m_lights(std::move(lights))
     {
     }
 
     using Layer = std::shared_ptr<MayaFlux::Buffers::InstanceNetworkBuffer>;
 
     std::filesystem::path m_path;
+    std::shared_ptr<MayaFlux::Nexus::InfluenceList> m_lights;
     std::filesystem::file_time_type m_seen {};
     Maze m_maze;
     std::shared_ptr<MayaFlux::Core::Window> m_window;
     Layer m_floor;
     Layer m_walls;
-    MayaFlux::ViewportBinding m_view;
+    std::shared_ptr<Camera> m_camera;
 
     bool build(const Maze& maze)
     {
@@ -181,8 +216,8 @@ private:
         m_window->show();
 
         const size_t count = maze.rows * maze.cols;
-        m_floor = make_layer(shaded_box({ 0.0F, -0.05F, 0.0F }, { cell * 0.48F, 0.05F, cell * 0.48F }, { 0.24F, 0.25F, 0.28F }), count);
-        m_walls = make_layer(shaded_box({ 0.0F, wall_height / 2, 0.0F }, { cell / 2, wall_height / 2, cell / 2 }, { 0.80F, 0.76F, 0.68F }), count);
+        m_floor = make_layer(box({ 0.0F, -0.05F, 0.0F }, { cell * 0.48F, 0.05F, cell * 0.48F }, { 0.24F, 0.25F, 0.28F }), count, 0.9F);
+        m_walls = make_layer(box({ 0.0F, wall_height / 2, 0.0F }, { cell / 2, wall_height / 2, cell / 2 }, { 0.80F, 0.76F, 0.68F }), count, 0.8F);
         if (!m_floor || !m_walls) {
             MF_PRINT("maze view: could not build the maze");
             return false;
@@ -197,8 +232,12 @@ private:
             .near_plane = 0.1F,
             .move_speed = 10.0F,
         };
-        m_view = MayaFlux::bind_fly_preset(m_window, m_walls->get_render_processor(), camera, {}, "game_view");
-        m_floor->get_render_processor()->set_view_cell(m_view.first);
+        // Half a maze beyond each side, a maze above it and half a maze under it. Over the floor
+        // the eye keeps 25 cm clear until B lets it under.
+        const MayaFlux::Kinesis::AABB3D bounds { .min = { -span, -span / 2, -span }, .max = { span, span, span } };
+        m_camera = std::make_shared<Camera>(m_window, camera, bounds, 0.25F);
+        m_camera->add_view_target(m_walls->get_render_processor());
+        m_camera->add_view_target(m_floor->get_render_processor());
 
         std::error_code ec;
         m_seen = std::filesystem::last_write_time(m_path, ec);
@@ -206,23 +245,14 @@ private:
         return true;
     }
 
-    /** @brief A box whose faces are shaded by direction, since the instanced shader has no lighting. */
-    static std::shared_ptr<MayaFlux::Nodes::GpuSync::MeshWriterNode> shaded_box(
-        glm::vec3 center, glm::vec3 half, glm::vec3 color)
+    /** @brief A box of one colour. */
+    static std::shared_ptr<MayaFlux::Nodes::GpuSync::MeshWriterNode> box(glm::vec3 center, glm::vec3 half, glm::vec3 color)
     {
         auto box = std::make_shared<MayaFlux::Nodes::GpuSync::MeshWriterNode>(24);
         box->set_mesh(MayaFlux::Kinesis::generate_box(center, half));
         auto vertices = box->get_mesh_vertices();
         for (auto& vertex : vertices) {
-            float light = 0.62F;
-            if (vertex.normal.y > 0.5F) {
-                light = 1.0F;
-            } else if (vertex.normal.y < -0.5F) {
-                light = 0.35F;
-            } else if (std::abs(vertex.normal.x) > 0.5F) {
-                light = 0.8F;
-            }
-            vertex.color = glm::vec4(color * light, 1.0F);
+            vertex.color = glm::vec4(color, 1.0F);
         }
         box->set_mesh_vertices(vertices);
         return box;
@@ -240,13 +270,21 @@ private:
         };
     }
 
-    Layer make_layer(std::shared_ptr<MayaFlux::Nodes::GpuSync::MeshWriterNode> shape, size_t count) const
+    /** @brief @p count hidden instances of @p shape, lit by m_lights with the given surface roughness. */
+    Layer make_layer(std::shared_ptr<MayaFlux::Nodes::GpuSync::MeshWriterNode> shape, size_t count, float roughness) const
     {
         MayaFlux::StructureConfig::Instances instances {};
         instances.prototype_writer = std::move(shape);
         instances.transforms = std::vector<glm::mat4>(count, hidden());
         instances.render.target_window = m_window;
-        return MayaFlux::vega.mint(instances);
+        instances.render.fragment_shader = "instance_lit.frag.spv";
+        auto layer = MayaFlux::vega.mint(instances);
+        if (layer) {
+            const auto& renderer = layer->get_render_processor();
+            renderer->set_specialization_constant(9, std::bit_cast<uint32_t>(roughness));
+            m_lights->bind(renderer);
+        }
+        return layer;
     }
 
     void place(const Maze& maze)

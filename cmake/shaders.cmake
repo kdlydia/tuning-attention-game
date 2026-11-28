@@ -1,4 +1,11 @@
-set(PROJECT_SHADER_DIR "${CMAKE_SOURCE_DIR}/data/shaders")
+# A project that builds the game's shaders too (the editor) sets PROJECT_SHADER_DIR first.
+if(NOT DEFINED PROJECT_SHADER_DIR)
+    set(PROJECT_SHADER_DIR "${CMAKE_SOURCE_DIR}/data/shaders")
+endif()
+
+# MayaFlux's own shader sources, so a shader of ours can include theirs
+# (include/lighting_influence.glsl and the rest). Searched after ours.
+get_filename_component(MAYAFLUX_SHADER_SOURCE_DIR "${MayaFlux_SHADER_DIR}/../../src/shaders" ABSOLUTE)
 
 file(GLOB_RECURSE PROJECT_SHADER_FILES CONFIGURE_DEPENDS
     "${PROJECT_SHADER_DIR}/*.vert"
@@ -28,9 +35,10 @@ foreach(SHADER_FILE ${PROJECT_SHADER_FILES})
 
     add_custom_command(
         OUTPUT  "${OUTPUT_FILE}"
-        COMMAND glslc --target-env=vulkan1.3
+        COMMAND glslc --target-env=vulkan1.4
             -I "${PROJECT_SHADER_DIR}"
             -I "${PROJECT_SHADER_DIR}/include"
+            -I "${MAYAFLUX_SHADER_SOURCE_DIR}"
             -MD -MF "${OUTPUT_FILE}.d"
             "${SHADER_FILE}" -o "${OUTPUT_FILE}"
         DEPENDS "${SHADER_FILE}"

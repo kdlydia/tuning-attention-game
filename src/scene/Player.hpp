@@ -7,9 +7,9 @@
 #include "MayaFlux/Kriya/MotionReflow.hpp"
 #include "MayaFlux/Kriya/Realization/MeshAssemblyRealization.hpp"
 #include "MayaFlux/Kriya/ReflowHelpers/FrameBlend.hpp"
+#include "MayaFlux/Transitive/Memory/SnapshotCell.hpp"
 
 #include <atomic>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -50,7 +50,7 @@ public:
         }
 
         auto player = std::shared_ptr<Player>(new Player());
-        player->m_placed->transform = placement;
+        player->m_placed->transform.publish(placement);
         for (size_t row = 0; row < assembly->get_total_elements(); ++row) {
             if (const auto p = assembly->placement(row); p && !p->parent) {
                 player->m_placed->roots.push_back(row);
@@ -77,10 +77,10 @@ public:
         auto placed = player->m_placed;
         player->m_reflow = builder.operation(Kriya::placement_blend(assembly))
                                .operation(Kriya::placement_edit(assembly, [placed](std::span<glm::mat4> locals, const Kriya::FrameContext&) {
-                                   const std::scoped_lock lock(placed->mutex);
+                                   const auto transform = placed->transform.read();
                                    for (const size_t row : placed->roots) {
                                        if (row < locals.size()) {
-                                           locals[row] = placed->transform * locals[row];
+                                           locals[row] = *transform * locals[row];
                                        }
                                    }
                                }))
@@ -198,23 +198,24 @@ public:
     /** @brief Where the whole assembly stands in the scene. */
     [[nodiscard]] glm::mat4 placement() const
     {
-        const std::scoped_lock lock(m_placed->mutex);
-        return m_placed->transform;
+        return *m_placed->transform.read();
     }
 
     void set_placement(const glm::mat4& transform)
     {
-        const std::scoped_lock lock(m_placed->mutex);
-        m_placed->transform = transform;
+        m_placed->transform.publish(transform);
     }
 
 private:
     Player() = default;
 
-    /** The placement the edit applies to the root rows, shared with the reflow's thread. */
+    /**
+     * The placement the edit applies to the root rows. The reflow's thread reads it on every
+     * advance and setters publish it, so it lives in a SnapshotCell. The roots are fixed
+     * before the reflow starts.
+     */
     struct Placed {
-        mutable std::mutex mutex;
-        glm::mat4 transform { 1.0F };
+        MayaFlux::Memory::SnapshotCell<glm::mat4> transform { glm::mat4(1.0F) };
         std::vector<size_t> roots;
     };
 

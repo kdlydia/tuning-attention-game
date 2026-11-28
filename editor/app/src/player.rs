@@ -103,8 +103,9 @@ impl PlayerWindow {
         self.track_id
     }
 
-    /// Show the player of `asset`.
+    /// Show the player of `asset`, and choose it in the game view.
     pub fn show(&mut self, asset: usize) {
+        scene::select(Some(asset));
         self.asset = Some(asset);
         self.motions = scene::motions(asset);
         self.shown = None;
@@ -119,6 +120,7 @@ impl PlayerWindow {
         match next_after(Some(asset), &scene::assets()) {
             Some(next) => self.show(next),
             None => {
+                scene::select(None);
                 self.asset = None;
                 self.motions.clear();
                 self.shown = None;
@@ -176,8 +178,11 @@ impl PlayerWindow {
         }
     }
 
-    /// Redraw what changed since the last frame.
+    /// Follow a choice made in the game view, then redraw what changed since the last frame.
     pub fn frame(&mut self) {
+        if let Some(chosen) = scene::selected().filter(|&c| self.asset != Some(c)) {
+            self.show(chosen);
+        }
         let Some(asset) = self.asset else {
             return;
         };

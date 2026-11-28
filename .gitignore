@@ -21,3 +21,7 @@ __pycache__/
 
 # Third-party test assets (licensed, see each README); not committed
 assets/samples/
+
+# Compiled from data/shaders by the build
+data/shaders/**/*.spv
+data/shaders/**/*.spv.d

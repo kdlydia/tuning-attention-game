@@ -9,9 +9,11 @@
 #include "MayaFlux/Kinesis/GeometryPrimitives.hpp"
 #include "MayaFlux/Kriya/MotionReflow.hpp"
 #include "MayaFlux/Kriya/Realization/MeshAssemblyRealization.hpp"
+#include "MayaFlux/Nexus/Pheme/InfluenceList.hpp"
 
 #include <glm/gtc/quaternion.hpp>
 
+#include <bit>
 #include <cstring>
 #include <numbers>
 #include <optional>
@@ -39,22 +41,24 @@ public:
     };
 
     /**
-     * @brief Build the creature standing at @p position in @p window, seen through @p view.
-     *        Call from a FRAME_ACCURATE task.
-     * @return The creature, which lives until the process exits (like MazeView), or null if a step failed.
+     * @brief Build the creature standing at @p position in @p window, seen through @p view and
+     *        lit by @p lights. Call from a FRAME_ACCURATE task.
+     * @return The creature, kept in MayaFlux's persistent store until End() as "creature" (like MazeView),
+     *         or null if a step failed.
      */
     static Creature* open(
         const std::shared_ptr<MayaFlux::Core::Window>& window,
         const std::shared_ptr<MayaFlux::Memory::OwnedCell<MayaFlux::Kinesis::Viewpoint>>& view,
-        glm::vec3 position)
+        glm::vec3 position,
+        const std::shared_ptr<MayaFlux::Nexus::InfluenceList>& lights)
     {
-        auto* creature = new Creature();
-        if (!creature->build(window, view, position)) {
+        auto creature = std::shared_ptr<Creature>(new Creature());
+        if (!creature->build(window, view, position, lights)) {
             MF_PRINT("creature: could not build it");
             return nullptr;
         }
         MF_PRINT("creature: swaying at ({:.1f}, {:.1f})", position.x, position.z);
-        return creature;
+        return MayaFlux::store("creature", std::move(creature)).get();
     }
 
 private:
@@ -69,7 +73,8 @@ private:
 
     bool build(const std::shared_ptr<MayaFlux::Core::Window>& window,
         const std::shared_ptr<MayaFlux::Memory::OwnedCell<MayaFlux::Kinesis::Viewpoint>>& view,
-        glm::vec3 position)
+        glm::vec3 position,
+        const std::shared_ptr<MayaFlux::Nexus::InfluenceList>& lights)
     {
         namespace Kakshya = MayaFlux::Kakshya;
         namespace Kriya = MayaFlux::Kriya;
@@ -125,12 +130,15 @@ private:
             return false;
         }
         MayaFlux::present_realization(m_realization, [window](const Kriya::MeshAssemblyRealizedPart&, size_t) {
-            return MayaFlux::Portal::Graphics::RenderConfig { .target_window = window };
+            return MayaFlux::Portal::Graphics::RenderConfig { .target_window = window, .fragment_shader = "mesh_network_lit.frag.spv" };
         });
         for (const auto& part : m_realization->parts()) {
             if (part.network_buffer) {
-                part.network_buffer->get_render_processor()->set_view_cell(
-                    view, true, MayaFlux::Portal::Graphics::CullMode::NONE);
+                // Slick, a little glossy.
+                const auto& renderer = part.network_buffer->get_render_processor();
+                renderer->set_view_cell(view, true, MayaFlux::Portal::Graphics::CullMode::NONE);
+                renderer->set_specialization_constant(9, std::bit_cast<uint32_t>(0.35F));
+                lights->bind(renderer);
             }
         }
 
@@ -147,8 +155,7 @@ private:
     /**
      * @brief The tube, coloured from a deep base to a pale tip with darker rings, and its skin.
      *
-     * The mesh shader has no lighting, so a fixed light is baked into the colours. The skin
-     * names joints 0 to joint_count - 1; the body's skeleton says which rows they are.
+     * The skin names joints 0 to joint_count - 1; the body's skeleton says which rows they are.
      */
     static std::optional<MayaFlux::Kakshya::MeshAssemblySource> make_body()
     {
@@ -173,14 +180,12 @@ private:
             skin.inverse_bind.push_back(glm::translate(glm::mat4(1.0F), { 0.0F, -segment * static_cast<float>(j), 0.0F }));
         }
 
-        const glm::vec3 light = glm::normalize(glm::vec3(0.4F, 0.8F, 0.45F));
         const glm::vec3 base_color(0.22F, 0.10F, 0.34F);
         const glm::vec3 tip_color(0.62F, 0.90F, 0.86F);
         for (auto& vertex : vertices) {
             const float t = std::clamp(vertex.position.y / height, 0.0F, 1.0F);
             const float ring = 0.82F + 0.18F * std::cos(t * 14.0F * std::numbers::pi_v<float>);
-            const float shade = 0.5F + 0.5F * std::max(glm::dot(vertex.normal, light), 0.0F);
-            vertex.color = glm::vec4(glm::mix(base_color, tip_color, t) * ring * shade, 1.0F);
+            vertex.color = glm::vec4(glm::mix(base_color, tip_color, t) * ring, 1.0F);
 
             const float s = t * static_cast<float>(joint_count - 1);
             const auto lower = std::min(static_cast<uint32_t>(s), static_cast<uint32_t>(joint_count - 2));

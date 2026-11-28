@@ -11,6 +11,7 @@
 
 namespace game {
 class Scene;
+class Selection;
 }
 
 namespace mf_scene {
@@ -19,8 +20,8 @@ namespace mf_scene {
 struct MotionInfo;
 struct PlayerState;
 
-// For the C++ host: the scene the editor works on.
-void attach(game::Scene* scene);
+// For the C++ host: the scene the editor works on, and what is chosen in the game view.
+void attach(game::Scene* scene, game::Selection* selection);
 
 std::int32_t load(rust::Str path);
 bool remove(std::size_t asset);
@@ -37,5 +38,7 @@ bool seek(std::size_t asset, double seconds);
 void set_speed(std::size_t asset, double value);
 void set_loop(std::size_t asset, bool looping);
 PlayerState state(std::size_t asset);
+std::int64_t selected();
+void select(std::int64_t asset);
 
 }

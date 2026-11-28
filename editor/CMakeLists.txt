@@ -40,7 +40,14 @@ cmake_path(GET CMAKE_SOURCE_DIR PARENT_PATH GAME_ROOT)
 target_include_directories(editor PRIVATE forma/cpp scene/cpp "${RUST_TARGET_DIR}/cxxbridge" "${GAME_ROOT}/src")
 target_precompile_headers(editor PRIVATE "${MayaFlux_PCH_FILE}")
 target_compile_definitions(editor PRIVATE MAYAFLUX_PROJECT MAYAFLUX_PROJECT_ROOT="${CMAKE_SOURCE_DIR}"
-    GAME_MAZE_FILE="${GAME_ROOT}/data/maze.txt")
+    GAME_MAZE_FILE="${GAME_ROOT}/data/maze.txt" GAME_SHADER_DIR="${GAME_ROOT}/data/shaders")
+
+# The game's shaders (data/shaders), which the scene draws with, compiled as the game's build does.
+set(PROJECT_SHADER_DIR "${GAME_ROOT}/data/shaders")
+include("${GAME_ROOT}/cmake/shaders.cmake")
+if(TARGET compile_project_shaders)
+    add_dependencies(editor compile_project_shaders)
+endif()
 target_link_libraries(editor PRIVATE MayaFlux::MayaFluxLib "${RUST_LIB}" Threads::Threads ${CMAKE_DL_LIBS})
 target_link_options(editor PRIVATE -rdynamic)
 set_target_properties(editor PROPERTIES

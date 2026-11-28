@@ -3,12 +3,14 @@
 #include "scene/src/lib.rs.h"
 
 #include "scene/Scene.hpp"
+#include "scene/Selection.hpp"
 
 namespace mf_scene {
 
 namespace {
 
     game::Scene* g_scene = nullptr;
+    game::Selection* g_selection = nullptr;
 
     game::Player* player_of(std::size_t asset)
     {
@@ -18,9 +20,23 @@ namespace {
 
 }
 
-void attach(game::Scene* scene)
+void attach(game::Scene* scene, game::Selection* selection)
 {
     g_scene = scene;
+    g_selection = selection;
+}
+
+std::int64_t selected()
+{
+    const auto chosen = g_selection ? g_selection->selected() : std::nullopt;
+    return chosen ? static_cast<std::int64_t>(*chosen) : -1;
+}
+
+void select(std::int64_t asset)
+{
+    if (g_selection) {
+        g_selection->select(asset >= 0 ? std::optional<std::size_t>(static_cast<std::size_t>(asset)) : std::nullopt);
+    }
 }
 
 std::int32_t load(rust::Str path)

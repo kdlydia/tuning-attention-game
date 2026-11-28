@@ -1,7 +1,8 @@
 // Starts MayaFlux and hands the graphics thread to the Rust editor: editor_start() once,
 // then editor_frame() every frame. First it opens the game's own 3D view of the maze, which
 // reloads when the editor saves, and the scene drawn in it, which the editor loads assets
-// into. Model or Alembic files given as arguments are loaded into the scene first.
+// into, lit by the scene's sun and sky. A left click in the game view chooses an asset for
+// the player window. Model or Alembic files given as arguments are loaded into the scene first.
 // With --test it runs the binding's press test instead, and with --check-player FILE it loads
 // FILE into the scene, drives its player through play, pause, a crossfade, seek and stop, then
 // removes it.
@@ -9,11 +10,14 @@
 
 #include "MayaFlux/MayaFlux.hpp"
 
+#include "MayaFlux/Kriya/Tasks.hpp"
+#include "MayaFlux/Nexus/Pheme/InfluenceList.hpp"
 #include "MayaFlux/Portal/Text/Text.hpp"
 
 #include "MazeView.hpp"
 #include "forma/src/lib.rs.h"
 #include "scene/Scene.hpp"
+#include "scene/Selection.hpp"
 #include "scene_shim.h"
 
 #include <atomic>
@@ -46,99 +50,106 @@ int main(int argc, char* argv[])
     MayaFlux::Init();
     MayaFlux::Start();
 
-    static std::atomic<int> result { test || check ? 2 : 0 };
+    // Read after End(), which empties MayaFlux's persistent store, so it stays out of it.
+    std::atomic<int> result { test || check ? 2 : 0 };
     constexpr auto frame = MayaFlux::Vruta::ProcessingToken::FRAME_ACCURATE;
 
     std::vector<std::pair<double, std::function<void()>>> steps;
     if (test) {
         steps.emplace_back(0.1, [] { mf_rs::selftest_start(); });
         steps.emplace_back(1.0, [] { mf_rs::selftest_poke(); });
-        steps.emplace_back(0.5, [] {
+        steps.emplace_back(0.5, [&result] {
             result = mf_rs::selftest_check() ? 0 : 1;
             MayaFlux::Unblock();
         });
     } else if (check) {
-        static const std::string file = argv[2];
-        static game::Scene* scene = nullptr;
-        static size_t index = 0;
-        static game::Player* player = nullptr;
-        static double held = 0.0;
-        const auto finish = [] {
+        struct Check {
+            std::string file;
+            game::Scene* scene {};
+            size_t index {};
+            game::Player* player {};
+            double held {};
+        };
+        auto& run = MayaFlux::make_persistent<Check>();
+        run.file = argv[2];
+        const auto finish = [&result] {
             result = g_checks_passed ? 0 : 1;
             MayaFlux::Unblock();
         };
-        steps.emplace_back(0.1, [finish] {
-            auto* view = game::MazeView::open(GAME_MAZE_FILE);
-            scene = view ? game::Scene::open(view->window(), view->view()) : nullptr;
-            const auto loaded = scene ? scene->load(file) : std::nullopt;
-            index = loaded.value_or(0);
-            player = loaded ? scene->asset(index)->player.get() : nullptr;
-            expect(player && !player->motions().empty(), "the file loads with a motion");
-            if (!player || player->motions().empty()) {
-                player = nullptr;
+        steps.emplace_back(0.1, [&run, finish] {
+            auto lights = std::make_shared<MayaFlux::Nexus::InfluenceList>();
+            auto* view = game::MazeView::open(GAME_MAZE_FILE, lights);
+            run.scene = view ? game::Scene::open(view->window(), view->view(), lights, GAME_SHADER_DIR) : nullptr;
+            const auto loaded = run.scene ? run.scene->load(run.file) : std::nullopt;
+            run.index = loaded.value_or(0);
+            run.player = loaded ? run.scene->asset(run.index)->player.get() : nullptr;
+            expect(run.player && !run.player->motions().empty(), "the file loads with a motion");
+            if (!run.player || run.player->motions().empty()) {
+                run.player = nullptr;
                 finish();
                 return;
             }
-            player->play(0);
+            run.player->play(0);
         });
-        steps.emplace_back(1.0, [] {
-            if (!player) {
+        steps.emplace_back(1.0, [&run] {
+            if (!run.player) {
                 return;
             }
-            expect(player->current() == 0 && !player->paused() && player->time() > 0.0, "motion 0 plays");
-            player->pause();
+            expect(run.player->current() == 0 && !run.player->paused() && run.player->time() > 0.0, "motion 0 plays");
+            run.player->pause();
         });
-        steps.emplace_back(0.3, [] { held = player ? player->time() : 0.0; });
-        steps.emplace_back(0.5, [] {
-            if (!player) {
+        steps.emplace_back(0.3, [&run] { run.held = run.player ? run.player->time() : 0.0; });
+        steps.emplace_back(0.5, [&run] {
+            if (!run.player) {
                 return;
             }
-            expect(player->paused() && player->time() == held, "pause holds the time");
-            player->play(player->motions().size() > 1 ? 1 : 0);
+            expect(run.player->paused() && run.player->time() == run.held, "pause holds the time");
+            run.player->play(run.player->motions().size() > 1 ? 1 : 0);
         });
-        steps.emplace_back(0.6, [] {
-            if (!player) {
+        steps.emplace_back(0.6, [&run] {
+            if (!run.player) {
                 return;
             }
-            const size_t wanted = player->motions().size() > 1 ? 1 : 0;
-            expect(player->current() == wanted && !player->paused(), "playing another motion switches to it");
-            player->seek(0.25);
+            const size_t wanted = run.player->motions().size() > 1 ? 1 : 0;
+            expect(run.player->current() == wanted && !run.player->paused(), "playing another motion switches to it");
+            run.player->seek(0.25);
         });
-        steps.emplace_back(0.1, [] {
-            if (!player) {
+        steps.emplace_back(0.1, [&run] {
+            if (!run.player) {
                 return;
             }
-            expect(player->time() >= 0.25 && player->time() < 0.6, "seek moves the time");
-            player->stop();
+            expect(run.player->time() >= 0.25 && run.player->time() < 0.6, "seek moves the time");
+            run.player->stop();
         });
-        steps.emplace_back(0.5, [] {
-            if (!player) {
+        steps.emplace_back(0.5, [&run] {
+            if (!run.player) {
                 return;
             }
-            expect(!player->current(), "stop returns to rest");
-            player = nullptr;
-            expect(scene->remove(index) && !scene->asset(index) && scene->slots() == index + 1, "remove takes it out and keeps the slot");
+            expect(!run.player->current(), "stop returns to rest");
+            run.player = nullptr;
+            expect(run.scene->remove(run.index) && !run.scene->asset(run.index) && run.scene->slots() == run.index + 1,
+                "remove takes it out and keeps the slot");
         });
-        steps.emplace_back(0.5, [finish] {
-            if (!scene || !g_checks_passed) {
+        steps.emplace_back(0.5, [&run, finish] {
+            if (!run.scene || !g_checks_passed) {
                 return;
             }
-            expect(!scene->remove(index), "it can't be removed twice");
+            expect(!run.scene->remove(run.index), "it can't be removed twice");
             finish();
         });
     } else {
-        static game::MazeView* view = nullptr;
-        static const std::vector<std::string> first_assets(argv + 1, argv + argc);
-        steps.emplace_back(0.1, [] {
+        steps.emplace_back(0.1, [first_assets = std::vector<std::string>(argv + 1, argv + argc)] {
             // Inter, rasterized near the size the tool rows draw it, so glyphs are not rescaled.
             // MayaFlux's own default (sans-serif at 24 px) stays if Inter isn't installed.
             if (!MayaFlux::Portal::Text::set_default_font("Inter", "Regular", 16, 1024)) {
                 MF_PRINT("editor: Inter not found, keeping the default font");
             }
-            view = game::MazeView::open(GAME_MAZE_FILE);
+            auto lights = std::make_shared<MayaFlux::Nexus::InfluenceList>();
+            auto* view = game::MazeView::open(GAME_MAZE_FILE, lights);
             if (view) {
-                auto* scene = game::Scene::open(view->window(), view->view());
-                mf_scene::attach(scene);
+                MayaFlux::schedule_metro(0.25, [view] { view->reload_if_changed(); }, "game_view_reload", frame);
+                auto* scene = game::Scene::open(view->window(), view->view(), lights, GAME_SHADER_DIR);
+                mf_scene::attach(scene, game::Selection::open(*scene, *view));
                 // In two rows across where the view looks: pieces up to 2.5 m wide in front, and
                 // wider ones 4 m behind them, each row centred and spaced by the pieces' widths.
                 const glm::vec3 middle = scene->looked_at();
@@ -169,9 +180,7 @@ int main(int argc, char* argv[])
             }
             editor_start();
         });
-        // One frame at the default 60 fps. Becomes Kriya::each_cycle once a nightly has it.
-        MayaFlux::schedule_metro(1.0 / 60, [] { editor_frame(); }, "editor_frame", frame);
-        MayaFlux::schedule_metro(0.25, [] { if (view) view->reload_if_changed(); }, "game_view_reload", frame);
+        MayaFlux::get_scheduler()->add_task(MayaFlux::Kriya::each_cycle([] { editor_frame(); }, frame), "editor_frame");
     }
     MayaFlux::schedule_sequence(std::move(steps), "editor", frame);
 
